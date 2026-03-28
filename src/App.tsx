@@ -910,7 +910,7 @@ export default function App() {
     }
   }, [setAppState]);
 
-  const handleExecuteAICommand = useCallback((command: any) => {
+  const handleExecuteAICommand = useCallback((command: any, onResult?: (result: { success: boolean; message: string }) => void) => {
     // Create context for the command executor
     const executorContext: CommandExecutorContext = {
       models,
@@ -922,7 +922,7 @@ export default function App() {
       cameraPaths,
       activeCameraPathId,
       prefabs,
-      collisionZones: [], // TODO: Wire collision zones from state
+      collisionZones: appState.collisionZones,
     };
 
     // Create callbacks for the executor to modify state
@@ -934,9 +934,7 @@ export default function App() {
       onActiveCameraPresetChange: setActiveCameraPresetId,
       onCameraPathsChange: setCameraPaths,
       onActiveCameraPathChange: setActiveCameraPathId,
-      onCollisionZonesChange: () => {
-        // TODO: Wire collision zone storage
-      },
+      onCollisionZonesChange: setCollisionZones,
       onOpenAssetBrowser: (mode, assetName) => {
         setAssetBrowserMode(mode);
         setIsAssetBrowserOpen(true);
@@ -949,15 +947,25 @@ export default function App() {
     // Execute the command
     const executor = new CommandExecutor(executorContext, executorCallbacks);
     executor.execute(command).then(result => {
+      // Call result callback if provided
+      if (onResult) {
+        onResult({ success: result.success, message: result.message });
+      }
+
+      // Also log for debugging
       if (!result.success) {
         console.warn(`Command ${command.type} failed:`, result.message);
       } else {
         console.log(`Command ${command.type} succeeded:`, result.message);
       }
     }).catch(error => {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (onResult) {
+        onResult({ success: false, message: `Error: ${errorMessage}` });
+      }
       console.error(`Error executing command ${command.type}:`, error);
     });
-  }, [models, selectedModelId, layers, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, prefabs, setModels, setLayers, setEnvironment, setCameraPresets, setActiveCameraPresetId, setCameraPaths, setActiveCameraPathId, setSelectedModelId, setTagFilter]);
+  }, [models, selectedModelId, layers, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, prefabs, appState.collisionZones, setModels, setLayers, setEnvironment, setCameraPresets, setActiveCameraPresetId, setCameraPaths, setActiveCameraPathId, setCollisionZones, setSelectedModelId, setTagFilter]);
 
   const handleTransformEnd = useCallback(() => {
     setAppState(prev => prev, { transient: false });
