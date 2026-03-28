@@ -1,0 +1,5 @@
+{
+  "name": "Remix: 3D Model Viewer",
+  "description": "A mobile-compatible 3D model viewer with support for GLB and OBJ files.",
+  "requestFramePermissions": []
+}
