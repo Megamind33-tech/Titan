@@ -535,8 +535,8 @@ export class CommandExecutor {
   }
 
   private handleCreateZone(payload: any): CommandResult {
-    const { name, type } = payload;
-    if (!name || !type) {
+    const { name, zoneType } = payload;
+    if (!name || !zoneType) {
       return { success: false, message: 'Zone name and type are required' };
     }
 
@@ -544,8 +544,8 @@ export class CommandExecutor {
     // We're just acknowledging the request here
     return {
       success: true,
-      message: `Zone creation requested: ${name} (${type})`,
-      requiredUIActions: [{ action: 'focus_collision_zones', payload: { newZoneName: name, newZoneType: type } }]
+      message: `Zone creation requested: ${name} (${zoneType})`,
+      requiredUIActions: [{ action: 'focus_collision_zones', payload: { newZoneName: name, newZoneType: zoneType } }]
     };
   }
 }

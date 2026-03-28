@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+// @ts-ignore - GLTFLoader types may not be available in all setups
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 
 export interface AssetAnalysis {

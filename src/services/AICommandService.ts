@@ -50,7 +50,7 @@ export type AICommandPayload =
   | { type: 'highlight_invalid_placements' }
   | { type: 'place_in_zone'; targetIds: string[]; zoneName: string; zoneType: string }
   | { type: 'list_zones' }
-  | { type: 'create_zone'; name: string; type: string; position?: [number, number, number] }
+  | { type: 'create_zone'; name: string; zoneType: string; position?: [number, number, number] }
   | { type: 'unknown'; reason: string };
 
 export interface AICommand {

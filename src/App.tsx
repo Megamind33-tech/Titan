@@ -329,12 +329,15 @@ export default function App() {
 
     const prefabModels = selectedModels.map(m => {
       const isRoot = m.id === root.id;
+      const newPosition: [number, number, number] = isRoot
+        ? [0, 0, 0]
+        : [m.position[0] - root.position[0], m.position[1] - root.position[1], m.position[2] - root.position[2]];
       return {
         ...m,
         id: idMap[m.id],
         parentId: m.parentId && idMap[m.parentId] ? idMap[m.parentId] : null,
         childrenIds: m.childrenIds?.map(cid => idMap[cid]).filter(Boolean) as string[],
-        position: isRoot ? [0, 0, 0] : [m.position[0] - root.position[0], m.position[1] - root.position[1], m.position[2] - root.position[2]],
+        position: newPosition,
         isPrefabRoot: isRoot
       };
     });
@@ -556,7 +559,7 @@ export default function App() {
         const savedState = await loadAutoSave();
         if (savedState) {
           setAppState({
-            models: savedState.models || [],
+            models: (savedState.models as ModelData[]) || [],
             prefabs: savedState.prefabs || [],
             gridReceiveShadow: savedState.sceneSettings?.gridReceiveShadow ?? true,
             shadowSoftness: savedState.sceneSettings?.shadowSoftness ?? 0.5,
@@ -565,7 +568,12 @@ export default function App() {
             activeCameraPresetId: savedState.cameraSettings?.activePresetId ?? 'default-orbit',
             cameraPaths: savedState.cameraSettings?.paths ?? [],
             activeCameraPathId: savedState.cameraSettings?.activePathId ?? null,
-            layers: savedState.layers ?? DEFAULT_LAYERS
+            layers: savedState.layers ?? DEFAULT_LAYERS,
+            terrain: savedState.terrain ?? { heightMap: Array(64).fill(0).map(() => Array(64).fill(0)), materialMap: Array(64).fill(0).map(() => Array(64).fill('grass')), size: 64, resolution: 64 },
+            paths: savedState.paths ?? [],
+            collisionZones: savedState.collisionZones ?? [],
+            activeProfileId: 'high',
+            customProfile: DEFAULT_PROFILES[2].settings
           }, { replace: true });
         }
       } catch (e) {
@@ -893,7 +901,7 @@ export default function App() {
     const state = await loadSceneVersion(versionId) as SceneState | null;
     if (state) {
       setAppState({
-        models: state.models || [],
+        models: (state.models as ModelData[]) || [],
         prefabs: state.prefabs || [],
         gridReceiveShadow: state.sceneSettings?.gridReceiveShadow ?? true,
         shadowSoftness: state.sceneSettings?.shadowSoftness ?? 0.5,
@@ -902,7 +910,12 @@ export default function App() {
         activeCameraPresetId: state.cameraSettings?.activePresetId ?? 'default-orbit',
         cameraPaths: state.cameraSettings?.paths ?? [],
         activeCameraPathId: state.cameraSettings?.activePathId ?? null,
-        layers: state.layers ?? DEFAULT_LAYERS
+        layers: state.layers ?? DEFAULT_LAYERS,
+        terrain: state.terrain ?? { heightMap: Array(64).fill(0).map(() => Array(64).fill(0)), materialMap: Array(64).fill(0).map(() => Array(64).fill('grass')), size: 64, resolution: 64 },
+        paths: state.paths ?? [],
+        collisionZones: state.collisionZones ?? [],
+        activeProfileId: 'high',
+        customProfile: DEFAULT_PROFILES[2].settings
       });
       setSelectedModelId(null);
     } else {

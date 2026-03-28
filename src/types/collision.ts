@@ -254,3 +254,62 @@ export function createZoneFromType(
     exportToRuntime: false,
   };
 }
+
+/**
+ * Validate if a model's placement is valid against all enabled collision zones.
+ * Returns validation result with violations if any.
+ */
+export function validatePlacementAgainstZones(
+  model: any,
+  zones: CollisionZone[]
+): { isValid: boolean; violations: string[] } {
+  const violations: string[] = [];
+  const enabledZones = zones.filter(z => z.enabled);
+
+  if (enabledZones.length === 0) {
+    return { isValid: true, violations: [] };
+  }
+
+  // Check each enabled zone for violations
+  for (const zone of enabledZones) {
+    // no_placement zones are hard blocks
+    if (zone.type === 'no_placement') {
+      // Check if model is inside this zone (simplified - just check proximity)
+      const distance = Math.hypot(
+        model.position[0] - zone.position[0],
+        model.position[2] - zone.position[2]
+      );
+      if (distance < zone.scale[0]) {
+        violations.push(`Inside restricted zone "${zone.name}"`);
+      }
+    }
+
+    // camera_restricted zones block cameras
+    if (zone.type === 'camera_restricted' && model.type === 'camera') {
+      const distance = Math.hypot(
+        model.position[0] - zone.position[0],
+        model.position[2] - zone.position[2]
+      );
+      if (distance < zone.scale[0]) {
+        violations.push(`Camera cannot be in zone "${zone.name}"`);
+      }
+    }
+
+    // water zones restrict non-water assets
+    if (zone.type === 'water') {
+      const isWaterRelated = model.behaviorTags?.includes('Water-Related') || false;
+      const distance = Math.hypot(
+        model.position[0] - zone.position[0],
+        model.position[2] - zone.position[2]
+      );
+      if (distance < zone.scale[0] && !isWaterRelated) {
+        violations.push(`Non-water asset in water zone "${zone.name}"`);
+      }
+    }
+  }
+
+  return {
+    isValid: violations.length === 0,
+    violations
+  };
+}

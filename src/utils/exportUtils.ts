@@ -184,7 +184,7 @@ export const exportScene = async (
         receiveShadow: model.receiveShadow,
         texture: textureFilePath || null
       },
-      metadata: model.metadata || {},
+      metadata: {},  // TODO: Extend ModelData with metadata field if needed
       parent: null,
       version: 1
     });

@@ -3,7 +3,7 @@ import { ModelData } from '../App';
 import { Prefab } from '../types/prefabs';
 import { Layer } from '../types/layers';
 import { CameraPreset, CameraPath } from '../types/camera';
-import { EnvironmentPreset } from '../types/environment';
+import { EnvironmentPreset, DEFAULT_ENVIRONMENT } from '../types/environment';
 import { TerrainData } from '../types/terrain';
 import { Path } from '../types/paths';
 import { CollisionZone } from '../types/collision';
@@ -142,7 +142,10 @@ export const loadSceneVersion = async (versionId: string): Promise<SceneState | 
 
 export const getVersionHistory = async (): Promise<SceneState[]> => {
   const history = await localforage.getItem('scene_history');
-  return history ?? [];
+  if (!history || !Array.isArray(history)) {
+    return [];
+  }
+  return history as SceneState[];
 };
 
 /**
@@ -197,8 +200,11 @@ export interface AutoSaveState {
  * WARNING: URLs are not restored (cannot be persisted).
  */
 export const loadAutoSave = async (): Promise<AutoSaveState | null> => {
-  const state = await localforage.getItem('autosave');
-  if (!state) return null;
+  const raw = await localforage.getItem('autosave');
+  if (!raw) return null;
+
+  // Type-cast from unknown to partial state object
+  const state = raw as Partial<AutoSaveState>;
 
   // Type-safe defaults
   return {
@@ -208,7 +214,7 @@ export const loadAutoSave = async (): Promise<AutoSaveState | null> => {
     sceneSettings: state.sceneSettings ?? {
       gridReceiveShadow: true,
       shadowSoftness: 0.5,
-      environment: { type: 'default', name: 'Default', intensity: 1 }
+      environment: DEFAULT_ENVIRONMENT
     },
     cameraSettings: state.cameraSettings ?? {
       presets: [],
