@@ -1,16 +1,25 @@
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Grid, OrbitControls, Environment } from '@react-three/drei';
+import { Grid, OrbitControls, Environment, ContactShadows } from '@react-three/drei';
 import { Suspense, useLayoutEffect, useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import * as THREE from 'three';
 import LoadingScreen from './LoadingScreen';
-import { useGLTF, TransformControls, PivotControls, Outlines } from '@react-three/drei';
+import { useGLTF, TransformControls, PivotControls } from '@react-three/drei';
+import { EffectComposer, Bloom, Vignette, ToneMapping } from '@react-three/postprocessing';
 import ErrorBoundary from './ErrorBoundary';
 import { ModelData } from '../App';
 import { MaterialPreset } from '../types/materials';
 import { EnvironmentPreset } from '../types/environment';
+import { CameraPreset, CameraPath, CameraPathPoint } from '../types/camera';
+import { Layer } from '../types/layers';
+import { TerrainData } from '../types/terrain';
+import { Path } from '../types/paths';
+import Terrain from './Terrain';
+import PathEditor from './PathEditor';
 
 interface SceneProps {
   models: ModelData[];
+  terrain: TerrainData;
+  paths: Path[];
   selectedModelId: string | null;
   focusTrigger: number;
   transformMode: 'translate' | 'rotate' | 'scale';
@@ -28,41 +37,194 @@ interface SceneProps {
   onDropAsset: (asset: any, position: [number, number, number]) => void;
   gridReceiveShadow: boolean;
   shadowSoftness: number;
+  tagFilter?: string;
   environment: EnvironmentPreset;
   onSceneReady?: (scene: THREE.Scene) => void;
+  activeCameraPresetId: string | null;
+  cameraPresets: CameraPreset[];
+  activeCameraPathId: string | null;
+  cameraPaths: CameraPath[];
+  onCameraChange: (updates: Partial<CameraPreset>) => void;
+  layers: Layer[];
+  selectionFilter: string[];
+  placementPrefabId: string | null;
+  onPlacePrefabAtPosition: (position: [number, number, number]) => void;
 }
 
-function CameraController({ selectedModelId, models, focusTrigger, isDragging }: { selectedModelId: string | null, models: any[], focusTrigger: number, isDragging: boolean }) {
+function PrefabPlacementHandler({ 
+  placementPrefabId, 
+  onPlacePrefabAtPosition 
+}: { 
+  placementPrefabId: string | null, 
+  onPlacePrefabAtPosition: (position: [number, number, number]) => void 
+}) {
+  const { camera, raycaster, gl } = useThree();
+
+  const handleClick = useCallback((e: MouseEvent) => {
+    if (!placementPrefabId) return;
+
+    const rect = gl.domElement.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+    
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const intersectionPoint = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(plane, intersectionPoint)) {
+      onPlacePrefabAtPosition([intersectionPoint.x, intersectionPoint.y, intersectionPoint.z]);
+    }
+  }, [camera, raycaster, gl, placementPrefabId, onPlacePrefabAtPosition]);
+
+  useEffect(() => {
+    if (placementPrefabId) {
+      gl.domElement.addEventListener('click', handleClick);
+      gl.domElement.style.cursor = 'crosshair';
+      return () => {
+        gl.domElement.removeEventListener('click', handleClick);
+        gl.domElement.style.cursor = 'auto';
+      };
+    }
+  }, [placementPrefabId, handleClick, gl]);
+
+  return null;
+}
+
+function CameraController({ 
+  selectedModelId, 
+  models, 
+  focusTrigger, 
+  isDragging,
+  activeCameraPresetId,
+  cameraPresets,
+  activeCameraPathId,
+  cameraPaths,
+  onCameraChange
+}: { 
+  selectedModelId: string | null, 
+  models: any[], 
+  focusTrigger: number, 
+  isDragging: boolean,
+  activeCameraPresetId: string | null,
+  cameraPresets: CameraPreset[],
+  activeCameraPathId: string | null,
+  cameraPaths: CameraPath[],
+  onCameraChange: (updates: Partial<CameraPreset>) => void
+}) {
   const { camera } = useThree();
   const controlsRef = useRef<any>(null);
   const [isFocusing, setIsFocusing] = useState(false);
   const focusTarget = useRef(new THREE.Vector3());
+  
+  // Path animation state
+  const pathState = useRef({
+    currentPointIndex: 0,
+    elapsedTime: 0,
+    isPaused: false,
+    pauseStartTime: 0
+  });
+
+  const activePreset = useMemo(() => 
+    cameraPresets.find(p => p.id === activeCameraPresetId), 
+    [activeCameraPresetId, cameraPresets]
+  );
+
+  const activePath = useMemo(() => 
+    cameraPaths.find(p => p.id === activeCameraPathId), 
+    [activeCameraPathId, cameraPaths]
+  );
+
+  // Apply preset settings
+  useEffect(() => {
+    if (activePreset && !activePath) {
+      camera.position.set(...activePreset.position);
+      if (controlsRef.current) {
+        controlsRef.current.target.set(...activePreset.target);
+      }
+      if (camera instanceof THREE.PerspectiveCamera) {
+        camera.fov = activePreset.fov;
+        camera.near = activePreset.near;
+        camera.far = activePreset.far;
+        camera.updateProjectionMatrix();
+      }
+    }
+  }, [activeCameraPresetId, activePath]);
 
   useEffect(() => {
-    if (selectedModelId) {
+    if (selectedModelId && !activePath) {
       const model = models.find(m => m.id === selectedModelId);
       if (model) {
         focusTarget.current.set(model.position[0], model.position[1], model.position[2]);
         setIsFocusing(true);
       }
     }
-  }, [selectedModelId, focusTrigger]); // Removed models from dependencies to allow panning while selected
+  }, [selectedModelId, focusTrigger, activePath]);
 
   useFrame((state, delta) => {
     if (controlsRef.current) {
-      if (isFocusing) {
+      // Handle Path Animation
+      if (activePath && activePath.points.length > 1) {
+        const { points, interpolation, loop } = activePath;
+        const { currentPointIndex, elapsedTime, isPaused, pauseStartTime } = pathState.current;
+
+        const nextPointIndex = (currentPointIndex + 1) % points.length;
+        const currentPoint = points[currentPointIndex];
+        const nextPoint = points[nextPointIndex];
+
+        if (isPaused) {
+          if (state.clock.getElapsedTime() - pauseStartTime >= (currentPoint.pause || 0)) {
+            pathState.current.isPaused = false;
+            pathState.current.elapsedTime = 0;
+          }
+        } else {
+          pathState.current.elapsedTime += delta;
+          const progress = Math.min(pathState.current.elapsedTime / nextPoint.duration, 1);
+
+          // Interpolate position and target
+          const startPos = new THREE.Vector3(...currentPoint.position);
+          const endPos = new THREE.Vector3(...nextPoint.position);
+          const startTarget = new THREE.Vector3(...currentPoint.target);
+          const endTarget = new THREE.Vector3(...nextPoint.target);
+
+          const t = interpolation === 'smooth' ? THREE.MathUtils.smoothstep(progress, 0, 1) : progress;
+
+          camera.position.lerpVectors(startPos, endPos, t);
+          controlsRef.current.target.lerpVectors(startTarget, endTarget, t);
+
+          if (progress >= 1) {
+            if (nextPointIndex === 0 && !loop) {
+              // End of path
+            } else {
+              pathState.current.currentPointIndex = nextPointIndex;
+              if (nextPoint.pause) {
+                pathState.current.isPaused = true;
+                pathState.current.pauseStartTime = state.clock.getElapsedTime();
+              } else {
+                pathState.current.elapsedTime = 0;
+              }
+            }
+          }
+        }
+      } else if (isFocusing) {
         controlsRef.current.target.lerp(focusTarget.current, delta * 5);
         if (controlsRef.current.target.distanceTo(focusTarget.current) < 0.01) {
           setIsFocusing(false);
         }
       }
 
-      // Enforce ground collision
-      if (camera.position.y < 0.1) {
-        camera.position.y = 0.1;
+      // Sync camera changes back to preset if it's the active one
+      if (!activePath && activePreset) {
+        // We could debounced sync here if needed, but for now let's just allow manual editing
       }
-      if (controlsRef.current.target.y < 0) {
-        controlsRef.current.target.y = 0;
+
+      // Enforce ground collision if not in a path
+      if (!activePath) {
+        if (camera.position.y < 0.1) {
+          camera.position.y = 0.1;
+        }
+        if (controlsRef.current.target.y < 0) {
+          controlsRef.current.target.y = 0;
+        }
       }
       
       controlsRef.current.update();
@@ -73,14 +235,16 @@ function CameraController({ selectedModelId, models, focusTrigger, isDragging }:
     <OrbitControls 
       ref={controlsRef}
       makeDefault 
-      enabled={!isDragging}
-      enablePan={true} 
+      enabled={!isDragging && !activePath}
+      enablePan={!activePreset?.indoorRestrictions} 
       enableZoom={true} 
       enableRotate={true} 
-      minPolarAngle={0}
-      maxPolarAngle={Math.PI / 2 - 0.01}
-      minDistance={0.1}
-      maxDistance={1000}
+      minPolarAngle={activePreset?.orbitLimits?.minPolar ?? 0}
+      maxPolarAngle={activePreset?.orbitLimits?.maxPolar ?? Math.PI / 2 - 0.01}
+      minDistance={activePreset?.orbitLimits?.minDistance ?? 0.1}
+      maxDistance={activePreset?.orbitLimits?.maxDistance ?? 1000}
+      minAzimuthAngle={activePreset?.orbitLimits?.minAzimuth ?? -Infinity}
+      maxAzimuthAngle={activePreset?.orbitLimits?.maxAzimuth ?? Infinity}
     />
   );
 }
@@ -137,10 +301,52 @@ function DropHandler({ onDropAsset }: { onDropAsset: (asset: any, position: [num
   return null;
 }
 
-export default function Scene({ models, selectedModelId, focusTrigger, transformMode, snapEnabled, groundSnap, translationSnap, rotationSnap, scaleSnap, onModelDimensionsChange, onModelPositionChange, onModelRotationChange, onModelScaleChange, onTransformEnd, onSelect, onDropAsset, gridReceiveShadow, shadowSoftness, environment, onSceneReady }: SceneProps) {
+export default function Scene({ 
+  models, 
+  selectedModelId, 
+  focusTrigger, 
+  transformMode, 
+  snapEnabled, 
+  groundSnap, 
+  translationSnap, 
+  rotationSnap, 
+  scaleSnap, 
+  onModelDimensionsChange, 
+  onModelPositionChange, 
+  onModelRotationChange, 
+  onModelScaleChange, 
+  onTransformEnd, 
+  onSelect, 
+  onDropAsset, 
+  gridReceiveShadow, 
+  shadowSoftness, 
+  tagFilter,
+  environment, 
+  onSceneReady,
+  activeCameraPresetId,
+  cameraPresets,
+  activeCameraPathId,
+  cameraPaths,
+  onCameraChange,
+  layers,
+  selectionFilter,
+  placementPrefabId,
+  onPlacePrefabAtPosition,
+  terrain,
+  paths
+}: SceneProps) {
   const [isTransforming, setIsTransforming] = useState(false);
-
   const [useCustomGizmo, setUseCustomGizmo] = useState(false);
+
+  const visibleModels = useMemo(() => {
+    return models.filter(model => {
+      const layer = layers.find(l => l.id === (model.layerId || 'env'));
+      const isVisible = layer ? layer.visible : true;
+      if (!isVisible) return false;
+      if (tagFilter && (!model.behaviorTags || !model.behaviorTags.includes(tagFilter))) return false;
+      return true;
+    });
+  }, [models, layers, tagFilter]);
 
   return (
     <div className="w-full h-full relative">
@@ -207,52 +413,90 @@ export default function Scene({ models, selectedModelId, focusTrigger, transform
             background={environment.backgroundType === 'preset'} 
             blur={0}
           />
+          {terrain && <Terrain terrain={terrain} />}
+          {(paths || []).map(path => (
+            <PathEditor 
+              key={path.id} 
+              path={path} 
+              onUpdatePath={() => {}} 
+              selectedPointId={null} 
+              onSelectPoint={() => {}} 
+            />
+          ))}
 
           {environment.backgroundType === 'color' && (
             <color attach="background" args={[environment.backgroundColor]} />
           )}
 
-          {models.map((model) => (
-            <ErrorBoundary key={model.id}>
-              <Model 
-                id={model.id}
-                name={model.name}
-                url={model.url} 
-                position={model.position} 
-                rotation={model.rotation}
-                scale={model.scale} 
-                transformMode={transformMode} 
-                snapEnabled={snapEnabled}
-                groundSnap={groundSnap}
-                translationSnap={translationSnap}
-                rotationSnap={rotationSnap}
-                scaleSnap={scaleSnap}
-                wireframe={model.wireframe}
-                lightIntensity={model.lightIntensity}
-                castShadow={model.castShadow}
-                receiveShadow={model.receiveShadow}
-                textureUrl={model.textureUrl}
-                normalMapUrl={model.normalMapUrl}
-                colorTint={model.colorTint}
-                opacity={model.opacity}
-                roughness={model.roughness}
-                metalness={model.metalness}
-                emissiveColor={model.emissiveColor}
-                material={model.material}
-                visible={model.visible}
-                type={model.type}
-                isSelected={selectedModelId === model.id}
-                useCustomGizmo={useCustomGizmo}
-                onDimensionsChange={onModelDimensionsChange}
-                onPositionChange={onModelPositionChange}
-                onRotationChange={onModelRotationChange}
-                onScaleChange={onModelScaleChange}
-                onTransformEnd={onTransformEnd}
-                onSelect={onSelect}
-                onDraggingChanged={setIsTransforming}
-              />
-            </ErrorBoundary>
-          ))}
+          {visibleModels.map((model) => {
+            const layer = layers.find(l => l.id === (model.layerId || 'env'));
+            const isLocked = model.locked || (layer ? layer.locked : false) || (model.behaviorTags || []).includes('Locked Layout Asset');
+
+            return (
+              <ErrorBoundary key={model.id}>
+                <Model 
+                  id={model.id}
+                  name={model.name}
+                  url={model.url} 
+                  position={model.position} 
+                  rotation={model.rotation}
+                  scale={model.scale} 
+                  transformMode={transformMode} 
+                  snapEnabled={snapEnabled}
+                  groundSnap={groundSnap}
+                  translationSnap={translationSnap}
+                  rotationSnap={rotationSnap}
+                  scaleSnap={scaleSnap}
+                  wireframe={model.wireframe}
+                  lightIntensity={model.lightIntensity}
+                  castShadow={model.castShadow}
+                  receiveShadow={model.receiveShadow}
+                  textureUrl={model.textureUrl}
+                  normalMapUrl={model.normalMapUrl}
+                  colorTint={model.colorTint}
+                  opacity={model.opacity}
+                  roughness={model.roughness}
+                  metalness={model.metalness}
+                  emissiveColor={model.emissiveColor}
+                  material={model.material}
+                  materialRemap={model.materialRemap}
+                  visible={model.visible}
+                  locked={isLocked}
+                  type={model.type}
+                  selectionFilter={selectionFilter}
+                  isSelected={selectedModelId === model.id}
+                  useCustomGizmo={useCustomGizmo}
+                  onDimensionsChange={onModelDimensionsChange}
+                  onPositionChange={onModelPositionChange}
+                  onRotationChange={onModelRotationChange}
+                  onScaleChange={onModelScaleChange}
+                  onTransformEnd={onTransformEnd}
+                  onSelect={onSelect}
+                  onDraggingChanged={setIsTransforming}
+                />
+              </ErrorBoundary>
+            );
+          })}
+
+          <ContactShadows 
+            opacity={0.4} 
+            scale={50} 
+            blur={2.4} 
+            far={10} 
+            resolution={256} 
+            color="#000000" 
+          />
+
+          <EffectComposer enableNormalPass={false}>
+            <Bloom 
+              luminanceThreshold={1.0} 
+              mipmapBlur 
+              intensity={0.5} 
+              radius={0.4} 
+            />
+            <ToneMapping />
+            <Vignette eskil={false} offset={0.1} darkness={1.1} />
+          </EffectComposer>
         </Suspense>
         <Grid 
           infiniteGrid 
@@ -274,14 +518,28 @@ export default function Scene({ models, selectedModelId, focusTrigger, transform
           <planeGeometry args={[1000, 1000]} />
           <meshStandardMaterial color="#2a2b2e" depthWrite={true} />
         </mesh>
-        <CameraController selectedModelId={selectedModelId} models={models} focusTrigger={focusTrigger} isDragging={isTransforming} />
+        <CameraController 
+          selectedModelId={selectedModelId} 
+          models={models} 
+          focusTrigger={focusTrigger} 
+          isDragging={isTransforming} 
+          activeCameraPresetId={activeCameraPresetId}
+          cameraPresets={cameraPresets}
+          activeCameraPathId={activeCameraPathId}
+          cameraPaths={cameraPaths}
+          onCameraChange={onCameraChange}
+        />
+        <PrefabPlacementHandler 
+          placementPrefabId={placementPrefabId}
+          onPlacePrefabAtPosition={onPlacePrefabAtPosition}
+        />
         <DropHandler onDropAsset={onDropAsset} />
       </Canvas>
     </div>
   );
 }
 
-function Model({ id, name, url, position, rotation, scale, transformMode, snapEnabled, groundSnap, translationSnap, rotationSnap, scaleSnap, wireframe, lightIntensity, castShadow, receiveShadow, textureUrl, normalMapUrl, colorTint, opacity, roughness, metalness, emissiveColor, material, visible, type, isSelected, useCustomGizmo, onDimensionsChange, onPositionChange, onRotationChange, onScaleChange, onTransformEnd, onSelect, onDraggingChanged }: { id: string; name: string; url: string; position: [number, number, number]; rotation: [number, number, number]; scale: [number, number, number]; transformMode: 'translate' | 'rotate' | 'scale'; snapEnabled?: boolean; groundSnap?: boolean; translationSnap?: number; rotationSnap?: number; scaleSnap?: number; wireframe?: boolean; lightIntensity?: number; castShadow?: boolean; receiveShadow?: boolean; textureUrl?: string; normalMapUrl?: string; colorTint?: string; opacity?: number; roughness?: number; metalness?: number; emissiveColor?: string; material?: MaterialPreset; visible?: boolean; type?: 'model' | 'environment' | 'light' | 'camera'; isSelected: boolean; useCustomGizmo?: boolean; onDimensionsChange: (id: string, dimensions: { width: number; height: number; depth: number }) => void; onPositionChange: (id: string, position: [number, number, number]) => void; onRotationChange: (id: string, rotation: [number, number, number]) => void; onScaleChange: (id: string, scale: [number, number, number]) => void; onTransformEnd: () => void; onSelect: (id: string) => void; onDraggingChanged: (isDragging: boolean) => void; }) {
+function Model({ id, name, url, position, rotation, scale, transformMode, snapEnabled, groundSnap, translationSnap, rotationSnap, scaleSnap, wireframe, lightIntensity, castShadow, receiveShadow, textureUrl, normalMapUrl, colorTint, opacity, roughness, metalness, emissiveColor, material, materialRemap, visible, locked, type, selectionFilter, isSelected, useCustomGizmo, onDimensionsChange, onPositionChange, onRotationChange, onScaleChange, onTransformEnd, onSelect, onDraggingChanged }: { id: string; name: string; url: string; position: [number, number, number]; rotation: [number, number, number]; scale: [number, number, number]; transformMode: 'translate' | 'rotate' | 'scale'; snapEnabled?: boolean; groundSnap?: boolean; translationSnap?: number; rotationSnap?: number; scaleSnap?: number; wireframe?: boolean; lightIntensity?: number; castShadow?: boolean; receiveShadow?: boolean; textureUrl?: string; normalMapUrl?: string; colorTint?: string; opacity?: number; roughness?: number; metalness?: number; emissiveColor?: string; material?: MaterialPreset; materialRemap?: { [oldMat: string]: string }; visible?: boolean; locked?: boolean; type?: 'model' | 'environment' | 'light' | 'camera'; selectionFilter: string[]; isSelected: boolean; useCustomGizmo?: boolean; onDimensionsChange: (id: string, dimensions: { width: number; height: number; depth: number }) => void; onPositionChange: (id: string, position: [number, number, number]) => void; onRotationChange: (id: string, rotation: [number, number, number]) => void; onScaleChange: (id: string, scale: [number, number, number]) => void; onTransformEnd: () => void; onSelect: (id: string) => void; onDraggingChanged: (isDragging: boolean) => void; }) {
   const { scene } = useGLTF(url);
   const clonedScene = useMemo(() => scene.clone(), [scene]);
   const groupRef = useRef<THREE.Group>(null);
@@ -289,6 +547,8 @@ function Model({ id, name, url, position, rotation, scale, transformMode, snapEn
   const prevDimensions = useRef<{ width: number; height: number; depth: number } | null>(null);
 
   const handlePointerDown = (e: any) => {
+    if (locked) return;
+    if (!selectionFilter.includes(type || 'model')) return;
     e.stopPropagation();
     onSelect(id);
   };
@@ -477,7 +737,7 @@ function Model({ id, name, url, position, rotation, scale, transformMode, snapEn
     />
   );
 
-  if (isSelected) {
+  if (isSelected && !locked) {
     if (useCustomGizmo) {
       return (
         <PivotControls

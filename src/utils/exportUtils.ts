@@ -8,11 +8,11 @@ export const exportScene = async (
   models: any[], 
   sceneSettings: any, 
   threeScene: THREE.Scene | null,
-  options: { selectedIds: string[], format: 'original' | 'glb' | 'obj', includeTextures: boolean, includeMaterials: boolean }
+  options: { selectedIds: string[], format: 'original' | 'glb' | 'obj', includeTextures: boolean, includeMaterials: boolean, cameraSettings?: any, layers?: any[] }
 ) => {
   const zip = new JSZip();
   
-  const manifest = {
+  const manifest: any = {
     version: "1.0.0",
     exportDate: new Date().toISOString(),
     scene: {
@@ -22,7 +22,9 @@ export const exportScene = async (
         directional: { intensity: 1.5, position: [50, 50, 25] },
         shadowSoftness: sceneSettings.shadowSoftness
       },
-      gridReceiveShadow: sceneSettings.gridReceiveShadow
+      gridReceiveShadow: sceneSettings.gridReceiveShadow,
+      camera: options.cameraSettings,
+      layers: options.layers
     },
     assets: [] as any[]
   };
@@ -31,6 +33,12 @@ export const exportScene = async (
   const texturesFolder = zip.folder("textures");
 
   const modelsToExport = models.filter(m => options.selectedIds.includes(m.id));
+
+  const exportSensitiveModels = modelsToExport.filter(m => (m.behaviorTags || []).includes('Export-Sensitive'));
+  if (exportSensitiveModels.length > 0) {
+    console.warn(`Exporting ${exportSensitiveModels.length} export-sensitive models. Special handling may be required.`);
+    manifest.exportSensitiveModels = exportSensitiveModels.map(m => m.id);
+  }
 
   for (const model of modelsToExport) {
     let modelFilePath = "";
@@ -105,6 +113,9 @@ export const exportScene = async (
       id: model.id,
       name: model.name,
       type: model.type || 'model',
+      layerId: model.layerId,
+      visible: model.visible,
+      locked: model.locked,
       file: modelFilePath,
       transform: {
         position: model.position,

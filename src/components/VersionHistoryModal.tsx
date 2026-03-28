@@ -49,69 +49,67 @@ export default function VersionHistoryModal({ isOpen, onClose, onLoadVersion, on
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
-        <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-          <h2 className="text-xl font-bold text-white">Version History & Save</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
-            ✕
-          </button>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-[#151619] border border-white/10 rounded shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh] overflow-hidden">
+        <div className="p-4 border-b border-white/5 flex justify-between items-center bg-white/5">
+          <h2 className="text-[12px] font-bold uppercase font-mono tracking-[0.2em] text-white/80">VERSION_HISTORY_&_SAVE</h2>
+          <button onClick={onClose} className="text-white/30 hover:text-white transition-colors text-[10px] font-mono">CLOSE_X</button>
         </div>
 
-        <div className="p-4 border-b border-gray-700 bg-gray-900/50">
-          <h3 className="text-sm font-semibold text-gray-300 mb-2">Save Current State</h3>
+        <div className="p-6 border-b border-white/5 bg-black/20 space-y-4">
+          <h3 className="hardware-label">SAVE_CURRENT_STATE</h3>
           <div className="flex gap-2">
             <input
               type="text"
               value={newNote}
               onChange={(e) => setNewNote(e.target.value)}
-              placeholder="Enter a note for this version (e.g., 'Added trees')"
-              className="flex-1 bg-gray-700 text-white px-3 py-2 rounded border border-gray-600 focus:outline-none focus:border-blue-500"
+              placeholder="ENTER_VERSION_NOTE..."
+              className="flex-1 hardware-input py-2"
               onKeyDown={(e) => e.key === 'Enter' && handleSave()}
             />
             <button
               onClick={handleSave}
               disabled={!newNote.trim()}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-4 py-2 rounded transition-colors font-medium"
+              className="hardware-button px-6 py-2 bg-white/10 text-white border-white/20 disabled:opacity-20 disabled:cursor-not-allowed"
             >
-              Save Version
+              SAVE_VERSION
             </button>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
-          <h3 className="text-sm font-semibold text-gray-300 mb-4">Previous Versions</h3>
+        <div className="flex-1 overflow-y-auto p-6 no-scrollbar">
+          <h3 className="hardware-label mb-4">PREVIOUS_VERSIONS</h3>
           {isLoading ? (
-            <div className="text-center text-gray-400 py-8">Loading history...</div>
+            <div className="text-center text-white/20 py-12 font-mono text-[10px] uppercase tracking-widest animate-pulse">LOADING_HISTORY...</div>
           ) : history.length === 0 ? (
-            <div className="text-center text-gray-400 py-8">No saved versions yet.</div>
+            <div className="text-center text-white/20 py-12 font-mono text-[10px] uppercase tracking-widest">NO_SAVED_VERSIONS_FOUND</div>
           ) : (
             <div className="space-y-3">
               {history.map((version) => (
-                <div key={version.versionId} className="bg-gray-700 rounded-lg p-4 border border-gray-600 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div key={version.versionId} className="bg-black/20 rounded p-4 border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 group hover:border-white/10 transition-colors">
                   <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-bold text-white">{version.note}</span>
-                      <span className="text-xs bg-gray-600 text-gray-300 px-2 py-0.5 rounded">
-                        v{version.versionId.slice(-6)}
+                    <div className="flex items-center gap-3 mb-1">
+                      <span className="font-mono text-[11px] text-white/80 uppercase tracking-tight">{version.note}</span>
+                      <span className="text-[8px] font-mono bg-white/5 text-white/30 px-2 py-0.5 rounded border border-white/5">
+                        ID_{version.versionId.slice(-6).toUpperCase()}
                       </span>
                     </div>
-                    <div className="text-xs text-gray-400 mb-2">
-                      {new Date(version.timestamp).toLocaleString()}
+                    <div className="text-[9px] font-mono text-white/20 mb-2 uppercase tracking-tighter">
+                      {new Date(version.timestamp).toLocaleString().toUpperCase()}
                     </div>
                     {version.changesSummary && (
-                      <div className="flex gap-3 text-xs">
-                        <span className="text-green-400">+{version.changesSummary.added} added</span>
-                        <span className="text-red-400">-{version.changesSummary.removed} removed</span>
-                        <span className="text-blue-400">~{version.changesSummary.edited} edited</span>
+                      <div className="flex gap-4 text-[8px] font-mono uppercase tracking-widest">
+                        <span className="text-white/40">ADD: <span className="text-white/70">{version.changesSummary.added}</span></span>
+                        <span className="text-white/40">REM: <span className="text-white/70">{version.changesSummary.removed}</span></span>
+                        <span className="text-white/40">MOD: <span className="text-white/70">{version.changesSummary.edited}</span></span>
                       </div>
                     )}
                   </div>
                   <button
                     onClick={() => handleLoad(version.versionId)}
-                    className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded transition-colors text-sm font-medium whitespace-nowrap"
+                    className="hardware-button px-4 py-2 opacity-60 group-hover:opacity-100"
                   >
-                    Restore
+                    RESTORE_STATE
                   </button>
                 </div>
               ))}

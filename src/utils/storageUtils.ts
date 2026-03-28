@@ -10,15 +10,25 @@ export interface SceneState {
   timestamp: string;
   note: string;
   models: any[];
+  prefabs?: any[];
   sceneSettings: any;
+  layers?: any[];
+  cameraSettings?: {
+    presets: any[];
+    activePresetId: string | null;
+    paths: any[];
+    activePathId: string | null;
+  };
   changesSummary?: {
     added: number;
     removed: number;
     edited: number;
   };
+  terrain?: any; // Will update to TerrainData when imported
+  paths?: any[];
 }
 
-export const saveSceneVersion = async (models: any[], sceneSettings: any, note: string = 'Manual Save') => {
+export const saveSceneVersion = async (models: any[], prefabs: any[], sceneSettings: any, note: string = 'Manual Save', cameraSettings?: any, layers?: any[], terrain?: any, paths?: any[]) => {
   const versionId = Date.now().toString();
   const state: SceneState = {
     versionId,
@@ -29,7 +39,12 @@ export const saveSceneVersion = async (models: any[], sceneSettings: any, note: 
       url: undefined, // Don't save blob URLs, they expire
       textureUrl: undefined
     })),
-    sceneSettings
+    prefabs,
+    sceneSettings,
+    cameraSettings,
+    layers,
+    terrain,
+    paths
   };
 
   const history: SceneState[] = await localforage.getItem('scene_history') || [];
@@ -78,14 +93,14 @@ export const loadSceneVersion = async (versionId: string): Promise<SceneState | 
     return restored;
   });
   
-  return { ...state, models: restoredModels };
+  return { ...state, models: restoredModels, prefabs: state.prefabs || [], terrain: state.terrain, paths: state.paths || [] };
 };
 
 export const getVersionHistory = async (): Promise<SceneState[]> => {
   return await localforage.getItem('scene_history') || [];
 };
 
-export const autoSaveScene = async (models: any[], sceneSettings: any) => {
+export const autoSaveScene = async (models: any[], prefabs: any[], sceneSettings: any, cameraSettings?: any, layers?: any[], terrain?: any, paths?: any[]) => {
   const state = {
     timestamp: new Date().toISOString(),
     models: models.map(m => ({
@@ -93,7 +108,12 @@ export const autoSaveScene = async (models: any[], sceneSettings: any) => {
       url: undefined,
       textureUrl: undefined
     })),
-    sceneSettings
+    prefabs,
+    sceneSettings,
+    cameraSettings,
+    layers,
+    terrain,
+    paths
   };
   await localforage.setItem('autosave', state);
 };
@@ -121,5 +141,5 @@ export const loadAutoSave = async (): Promise<any | null> => {
     return restored;
   });
   
-  return { ...state, models: restoredModels };
+  return { ...state, models: restoredModels, prefabs: state.prefabs || [], terrain: state.terrain, paths: state.paths || [] };
 };

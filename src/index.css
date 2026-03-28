@@ -1,5 +1,23 @@
 @import "tailwindcss";
 
+@theme {
+  --font-mono: 'JetBrains Mono', 'Roboto Mono', monospace;
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  
+  --color-bg-dark: #151619;
+  --color-bg-darker: #0d0e10;
+  --color-accent: #3b82f6;
+  --color-accent-glow: rgba(59, 130, 246, 0.4);
+  --color-border: #2a2b2e;
+  --color-text-muted: #8e9299;
+}
+
+@layer base {
+  body {
+    @apply bg-bg-dark text-white font-sans antialiased;
+  }
+}
+
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;
@@ -7,5 +25,33 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+  
+  .hardware-border {
+    @apply border border-border;
+  }
+  
+  .hardware-card {
+    @apply bg-bg-darker/80 backdrop-blur-md border border-border rounded-lg shadow-2xl;
+  }
+  
+  .hardware-label {
+    @apply text-[10px] uppercase tracking-wider font-mono text-text-muted font-semibold;
+  }
+  
+  .hardware-value {
+    @apply font-mono text-xs text-white;
+  }
+
+  .hardware-button {
+    @apply bg-white/5 hover:bg-white/10 border border-white/5 hover:border-white/10 transition-all duration-200 rounded px-2 py-1 text-[10px] font-mono uppercase tracking-tighter text-white/70 hover:text-white;
+  }
+
+  .hardware-input {
+    @apply bg-black/40 border border-white/5 rounded px-2 py-1 text-[10px] font-mono text-white/90 focus:outline-none focus:border-white/20 transition-colors;
+  }
+  
+  .glow-accent {
+    box-shadow: 0 0 10px var(--color-accent-glow);
   }
 }
