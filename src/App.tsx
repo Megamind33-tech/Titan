@@ -32,6 +32,7 @@ import { DeviceProfile, QualitySettings } from './types/quality';
 import { DEFAULT_PROFILES } from './constants/qualityProfiles';
 import { pluginManager } from './services/PluginManager';
 import { DiagnosticsPlugin } from './plugins/DiagnosticsPlugin';
+import { CommandExecutor, CommandExecutorContext, CommandExecutorCallbacks } from './services/CommandExecutor';
 
 export interface ModelData {
   id: string;
@@ -447,7 +448,7 @@ export default function App() {
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [pluginUIVersion, setPluginUIVersion] = useState(0);
 
-  // Initialize Plugin System
+  // Initialize Plugin System with working API
   useEffect(() => {
     pluginManager.initCoreApi({
       getSceneState: () => ({
@@ -456,34 +457,57 @@ export default function App() {
         paths: appState.paths,
         prefabs: appState.prefabs,
       }),
-      updateSceneState: (updater: any) => {
-        // Basic implementation for now
-        console.log("Plugin requested scene update", updater);
+      updateSceneState: (updater: (state: any) => any) => {
+        // Actually execute the update instead of just logging
+        const currentState = {
+          models: appState.models,
+          layers: appState.layers,
+          paths: appState.paths,
+          prefabs: appState.prefabs,
+        };
+        const newState = updater(currentState);
+
+        // Apply updates to app state
+        if (newState.models !== currentState.models) {
+          setModels(newState.models);
+        }
+        if (newState.layers !== currentState.layers) {
+          setLayers(newState.layers);
+        }
+        if (newState.paths !== currentState.paths) {
+          setAppState(prev => ({ ...prev, paths: newState.paths }));
+        }
+        if (newState.prefabs !== currentState.prefabs) {
+          setPrefabs(newState.prefabs);
+        }
       },
       subscribeToScene: (listener: any) => {
-        // In a real app, we'd use a more robust pub/sub system
-        // For now, we'll just call it immediately
+        // Call with current state
         listener({
           models: appState.models,
           layers: appState.layers,
           paths: appState.paths,
           prefabs: appState.prefabs,
         });
+
+        // TODO: In a production app, implement proper pub/sub system
+        // For now, just return a no-op unsubscribe
         return () => {};
       },
-      getAssetLibrary: () => [], // Mock
-      addAsset: () => {}, // Mock
+      getAssetLibrary: () => [], // TODO: Wire asset library
+      addAsset: () => {}, // TODO: Wire asset addition
       triggerUIUpdate: () => {
         setPluginUIVersion(v => v + 1);
       },
       savePluginData: (id: string, data: any) => {
-        console.log(`Saving plugin data for ${id}`, data);
+        // TODO: Persist plugin data to storage
+        console.log(`Plugin data saved for ${id}`, data);
       }
     });
 
     // Register built-in plugins
     pluginManager.register(DiagnosticsPlugin);
-  }, [appState.models, appState.layers, appState.paths, appState.prefabs]);
+  }, [appState.models, appState.layers, appState.paths, appState.prefabs, setModels, setLayers, setPrefabs, setAppState]);
 
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
@@ -866,119 +890,53 @@ export default function App() {
   }, [setAppState]);
 
   const handleExecuteAICommand = useCallback((command: any) => {
-    switch (command.type) {
-      case 'place_asset':
-        // For now, we'll just open the asset browser or place a default shape
-        // In a real app, we'd look up the assetName in the library
-        setAssetBrowserMode('place');
+    // Create context for the command executor
+    const executorContext: CommandExecutorContext = {
+      models,
+      selectedModelId,
+      layers,
+      environment,
+      cameraPresets,
+      activeCameraPresetId,
+      cameraPaths,
+      activeCameraPathId,
+      prefabs,
+      collisionZones: [], // TODO: Wire collision zones from state
+    };
+
+    // Create callbacks for the executor to modify state
+    const executorCallbacks: CommandExecutorCallbacks = {
+      onModelsChange: setModels,
+      onLayersChange: setLayers,
+      onEnvironmentChange: setEnvironment,
+      onCameraPresetsChange: setCameraPresets,
+      onActiveCameraPresetChange: setActiveCameraPresetId,
+      onCameraPathsChange: setCameraPaths,
+      onActiveCameraPathChange: setActiveCameraPathId,
+      onCollisionZonesChange: () => {
+        // TODO: Wire collision zone storage
+      },
+      onOpenAssetBrowser: (mode, assetName) => {
+        setAssetBrowserMode(mode);
         setIsAssetBrowserOpen(true);
-        break;
-      case 'update_transform':
-        if (command.payload.targetId) {
-          handleUpdateModel(command.payload.targetId, {
-            position: command.payload.position,
-            rotation: command.payload.rotation,
-            scale: command.payload.scale
-          });
-        }
-        break;
-      case 'replace_asset':
-        if (command.payload.targetId) {
-          setSelectedModelId(command.payload.targetId);
-          setAssetBrowserMode('replace');
-          setIsAssetBrowserOpen(true);
-        }
-        break;
-      case 'apply_material':
-        // Needs material library integration
-        break;
-      case 'update_lighting':
-        if (command.payload.presetName) {
-          // Find preset by name and apply
-          // For now, just a placeholder
-          console.log("Apply lighting preset:", command.payload.presetName);
-        }
-        break;
-      case 'update_camera':
-        if (command.payload.presetName) {
-          const preset = cameraPresets.find(p => p.name.toLowerCase().includes(command.payload.presetName.toLowerCase()));
-          if (preset) {
-            setActiveCameraPresetId(preset.id);
-          }
-        }
-        break;
-      case 'place_along_path':
-        if (command.payload.assetName && command.payload.pathId) {
-          console.log("Place along path:", command.payload);
-          // Needs path integration
-        }
-        break;
-      case 'organize_layers':
-        if (command.payload.targetIds && command.payload.layerName) {
-          // Find or create layer
-          let layer = layers.find(l => l.name.toLowerCase() === command.payload.layerName.toLowerCase());
-          if (!layer) {
-            const newLayerId = `layer-${Date.now()}`;
-            handleAddLayer({ id: newLayerId, name: command.payload.layerName, visible: true, locked: false, color: '#888888' });
-            layer = { id: newLayerId, name: command.payload.layerName, visible: true, locked: false, color: '#888888' };
-          }
-          
-          // Move objects to layer
-          const newModels = models.map(m => 
-            command.payload.targetIds.includes(m.id) ? { ...m, layerId: layer!.id } : m
-          );
-          setModels(newModels);
-        }
-        break;
-      case 'lock_hide':
-        if (command.payload.targetIds && command.payload.action) {
-          const newModels = models.map(m => {
-            if (command.payload.targetIds.includes(m.id)) {
-              if (command.payload.action === 'lock') return { ...m, locked: true };
-              if (command.payload.action === 'unlock') return { ...m, locked: false };
-              if (command.payload.action === 'hide') return { ...m, visible: false };
-              if (command.payload.action === 'show') return { ...m, visible: true };
-            }
-            return m;
-          });
-          setModels(newModels);
-        }
-        break;
-      case 'filter_by_tag':
-        if (command.payload.tag !== undefined) {
-          setTagFilter(command.payload.tag);
-        }
-        break;
-      case 'update_tags':
-        if (command.payload.targetIds && command.payload.tags && command.payload.action) {
-          const newModels = models.map(m => {
-            if (command.payload.targetIds.includes(m.id)) {
-              let currentTags = m.behaviorTags || [];
-              if (command.payload.action === 'add') {
-                currentTags = [...new Set([...currentTags, ...command.payload.tags])];
-              } else if (command.payload.action === 'remove') {
-                currentTags = currentTags.filter(t => !command.payload.tags.includes(t));
-              }
-              return { ...m, behaviorTags: currentTags };
-            }
-            return m;
-          });
-          setModels(newModels);
-        }
-        break;
-      case 'explain':
-      case 'suggest_optimization':
-        if (command.payload.targetId) {
-          setSelectedModelId(command.payload.targetId);
-        }
-        break;
-      case 'prepare_export':
-        setIsExportModalOpen(true);
-        break;
-      default:
-        console.log("Unhandled AI command:", command);
-    }
-  }, [models, layers, handleUpdateModel, handleAddLayer, setModels]);
+      },
+      onOpenExportModal: () => setIsExportModalOpen(true),
+      onSelectModel: setSelectedModelId,
+      onTagFilterChange: setTagFilter,
+    };
+
+    // Execute the command
+    const executor = new CommandExecutor(executorContext, executorCallbacks);
+    executor.execute(command).then(result => {
+      if (!result.success) {
+        console.warn(`Command ${command.type} failed:`, result.message);
+      } else {
+        console.log(`Command ${command.type} succeeded:`, result.message);
+      }
+    }).catch(error => {
+      console.error(`Error executing command ${command.type}:`, error);
+    });
+  }, [models, selectedModelId, layers, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, prefabs, setModels, setLayers, setEnvironment, setCameraPresets, setActiveCameraPresetId, setCameraPaths, setActiveCameraPathId, setSelectedModelId, setTagFilter]);
 
   const handleTransformEnd = useCallback(() => {
     setAppState(prev => prev, { transient: false });
