@@ -8,12 +8,16 @@
 import { ModelData } from '../App';
 import { Layer } from '../types/layers';
 import { Prefab } from '../types/prefabs';
-import { EnvironmentPreset, DEFAULT_ENVIRONMENT } from '../types/environment';
+import { EnvironmentPreset } from '../types/environment';
 import { CameraPreset, CameraPath } from '../types/camera';
 import { MaterialPreset } from '../types/materials';
+import { Path } from '../types/paths';
 import { AICommand, AICommandPayload } from './AICommandService';
 import { CollisionZone, validatePlacementAgainstZones } from '../types/collision';
 import { MaterialService } from './MaterialService';
+import { findEnvironmentPreset, findMaterialPreset } from './PresetLookupService';
+import { computePlacementSamples, isPathValid, tangentToYaw } from '../utils/pathPlacement';
+import { Asset } from '../types/assets';
 
 export interface CommandExecutorContext {
   models: ModelData[];
@@ -27,6 +31,9 @@ export interface CommandExecutorContext {
   prefabs: Prefab[];
   collisionZones: CollisionZone[];
   materialLibrary: MaterialPreset[];
+  environmentLibrary: EnvironmentPreset[];
+  paths: Path[];
+  assets: Asset[];
 }
 
 export interface CommandResult {
@@ -50,6 +57,8 @@ export interface CommandExecutorCallbacks {
   onOpenExportModal: () => void;
   onSelectModel: (id: string | null) => void;
   onTagFilterChange: (tag: string) => void;
+  onCloneModels: (sourceModel: ModelData, placements: Array<{ position: [number, number, number]; rotation: [number, number, number] }>) => string[];
+  onCreateModelsFromAsset: (asset: Asset, placements: Array<{ position: [number, number, number]; rotation: [number, number, number] }>) => string[];
 }
 
 export class CommandExecutor {
@@ -195,16 +204,10 @@ export class CommandExecutor {
       return { success: false, message: `Model ${targetId} not found` };
     }
 
-    // Look up the material from the library
-    let material: MaterialPreset | undefined;
-    if (materialId) {
-      material = this.context.materialLibrary.find(m => m.id === materialId);
-    } else if (materialName) {
-      // Try matching by name (case-insensitive)
-      material = this.context.materialLibrary.find(m =>
-        m.name.toLowerCase() === materialName.toLowerCase()
-      );
-    }
+    const material = findMaterialPreset(this.context.materialLibrary, {
+      id: materialId,
+      name: materialName
+    });
 
     if (!material) {
       const searchTerm = materialId || materialName;
@@ -258,16 +261,29 @@ export class CommandExecutor {
   }
 
   private handleUpdateLighting(payload: any): CommandResult {
-    const { presetName } = payload;
-    if (!presetName) {
-      return { success: false, message: 'Preset name is required' };
+    const { presetName, presetId } = payload;
+    if (!presetName && !presetId) {
+      return { success: false, message: 'Preset name or preset ID is required' };
     }
 
-    // TODO: Create a lighting preset system and map preset names to environments
-    // For now, this is a placeholder
+    const preset = findEnvironmentPreset(this.context.environmentLibrary, {
+      id: presetId,
+      name: presetName
+    });
+
+    if (!preset) {
+      const available = this.context.environmentLibrary.map(p => p.name).join(', ');
+      return {
+        success: false,
+        message: `Lighting preset "${presetId || presetName}" not found. Available: ${available || 'none'}`
+      };
+    }
+
+    this.callbacks.onEnvironmentChange({ ...preset });
+
     return {
-      success: false,
-      message: `Lighting preset system not yet implemented (requested: "${presetName}")`
+      success: true,
+      message: `Applied lighting preset "${preset.name}"`
     };
   }
 
@@ -297,23 +313,97 @@ export class CommandExecutor {
   }
 
   private handlePlaceAlongPath(payload: any): CommandResult {
-    const { assetName, pathId, count } = payload;
-    if (!assetName || !pathId || !count) {
-      return { success: false, message: 'Asset name, path ID, and count are required' };
+    const { assetName, assetId, sourceModelId, pathId, pathName, count, spacing, orientToPath } = payload;
+    if ((!assetName && !assetId && !sourceModelId) || (!pathId && !pathName) || !count) {
+      return { success: false, message: 'Asset reference, path ID/name, and count are required' };
     }
 
-    const path = this.context.models.find(m => m.id === pathId);
+    const numericCount = Number(count);
+    if (!Number.isInteger(numericCount) || numericCount <= 0) {
+      return { success: false, message: 'Count must be a positive integer' };
+    }
+
+    const path = this.context.paths.find(p =>
+      (pathId && p.id === pathId) ||
+      (pathName && p.name.toLowerCase() === String(pathName).toLowerCase())
+    );
+
     if (!path) {
       return {
         success: false,
-        message: `Path with ID ${pathId} not found`
+        message: `Path "${pathId || pathName}" not found`
       };
     }
 
-    // TODO: Implement path-based placement algorithm
+    if (!isPathValid(path)) {
+      return {
+        success: false,
+        message: `Path "${path.name}" is invalid. Paths need at least 2 control points.`
+      };
+    }
+
+    const normalizedAssetName = assetName ? String(assetName).toLowerCase() : null;
+    const sourceModel = this.context.models.find(model =>
+      (sourceModelId && model.id === sourceModelId) ||
+      (assetId && model.assetId === assetId) ||
+      (!!normalizedAssetName && model.name.toLowerCase() === normalizedAssetName) ||
+      (!!normalizedAssetName && model.name.toLowerCase().includes(normalizedAssetName))
+    );
+
+    const placements = computePlacementSamples(path, numericCount, { spacing }).map(sample => ({
+      position: sample.position,
+      rotation: orientToPath
+        ? [0, tangentToYaw(sample.tangent), 0] as [number, number, number]
+        : [0, 0, 0] as [number, number, number]
+    }));
+
+    if (placements.length === 0) {
+      return {
+        success: false,
+        message: `Could not compute placements for path "${path.name}"`
+      };
+    }
+
+    if (sourceModel) {
+      const modelPlacements = placements.map(placement => ({
+        ...placement,
+        rotation: orientToPath
+          ? placement.rotation
+          : [...sourceModel.rotation] as [number, number, number]
+      }));
+      const placedIds = this.callbacks.onCloneModels(sourceModel, modelPlacements);
+      return {
+        success: true,
+        message: `Placed ${placedIds.length} "${sourceModel.name}" instance(s) along path "${path.name}"`,
+        affectedModelIds: placedIds
+      };
+    }
+
+    const assetMatch = this.context.assets.find(asset =>
+      (assetId && asset.id === assetId) ||
+      (!!normalizedAssetName && asset.metadata.name.toLowerCase() === normalizedAssetName) ||
+      (!!normalizedAssetName && asset.metadata.name.toLowerCase().includes(normalizedAssetName))
+    );
+
+    if (!assetMatch) {
+      return {
+        success: false,
+        message: `Unable to resolve asset "${assetId || sourceModelId || assetName}" from scene models or asset library`
+      };
+    }
+
+    if (!assetMatch.url) {
+      return {
+        success: false,
+        message: `Asset "${assetMatch.metadata.name}" is metadata-only. Re-upload it before path placement.`
+      };
+    }
+    const placedIds = this.callbacks.onCreateModelsFromAsset(assetMatch, placements);
+
     return {
-      success: false,
-      message: `Path-based placement not yet implemented (requested: ${count} "${assetName}" along path)`
+      success: true,
+      message: `Placed ${placedIds.length} "${assetMatch.metadata.name}" instance(s) along path "${path.name}"`,
+      affectedModelIds: placedIds
     };
   }
 
