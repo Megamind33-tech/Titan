@@ -26,6 +26,13 @@ export interface ExportAssetManifest {
     castShadow: boolean;
     receiveShadow: boolean;
     texture?: string | null;
+    presetId?: string;
+    presetName?: string;
+    color?: string;
+    opacity?: number;
+    roughness?: number;
+    metalness?: number;
+    emissiveColor?: string;
   };
   metadata?: Record<string, any>;
   parent?: string | null;
@@ -41,6 +48,11 @@ export interface SceneExportManifest {
       hemisphere: { intensity: number; color: string; groundColor: string };
       directional: { intensity: number; position: [number, number, number] };
       shadowSoftness: number;
+      presetId?: string;
+      presetName?: string;
+      environmentPreset?: string;
+      exposure?: number;
+      toneMapping?: string;
     };
     gridReceiveShadow: boolean;
     camera?: CameraSettings;
@@ -72,10 +84,22 @@ export const exportScene = async (
     exportDate: new Date().toISOString(),
     scene: {
       lighting: {
-        ambient: 0.3,
-        hemisphere: { intensity: 0.6, color: "#ffffff", groundColor: "#2a2b2e" },
-        directional: { intensity: 1.5, position: [50, 50, 25] },
-        shadowSoftness: sceneSettings.shadowSoftness
+        ambient: sceneSettings.environment.ambientIntensity,
+        hemisphere: {
+          intensity: sceneSettings.environment.hemisphereIntensity,
+          color: sceneSettings.environment.hemisphereColor,
+          groundColor: sceneSettings.environment.hemisphereGroundColor
+        },
+        directional: {
+          intensity: sceneSettings.environment.directionalIntensity,
+          position: sceneSettings.environment.directionalPosition
+        },
+        shadowSoftness: sceneSettings.shadowSoftness,
+        presetId: sceneSettings.environment.id,
+        presetName: sceneSettings.environment.name,
+        environmentPreset: sceneSettings.environment.environmentPreset,
+        exposure: sceneSettings.environment.exposure,
+        toneMapping: sceneSettings.environment.toneMapping
       },
       gridReceiveShadow: sceneSettings.gridReceiveShadow,
       camera: options.cameraSettings,
@@ -182,7 +206,22 @@ export const exportScene = async (
         lightIntensity: model.lightIntensity,
         castShadow: model.castShadow,
         receiveShadow: model.receiveShadow,
-        texture: textureFilePath || null
+        texture: textureFilePath || null,
+        ...(model.material ? {
+          presetId: model.material.id,
+          presetName: model.material.name,
+          color: model.material.color,
+          opacity: model.material.opacity,
+          roughness: model.material.roughness,
+          metalness: model.material.metalness,
+          emissiveColor: model.material.emissiveColor
+        } : {
+          color: model.colorTint,
+          opacity: model.opacity,
+          roughness: model.roughness,
+          metalness: model.metalness,
+          emissiveColor: model.emissiveColor
+        })
       },
       metadata: {},  // TODO: Extend ModelData with metadata field if needed
       parent: null,
