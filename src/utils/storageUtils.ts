@@ -1,67 +1,96 @@
 import localforage from 'localforage';
+import { ModelData } from '../App';
+import { Prefab } from '../types/prefabs';
+import { Layer } from '../types/layers';
+import { CameraPreset, CameraPath } from '../types/camera';
+import { EnvironmentPreset, DEFAULT_ENVIRONMENT } from '../types/environment';
+import { TerrainData } from '../types/terrain';
+import { Path } from '../types/paths';
+import { CollisionZone } from '../types/collision';
 
 localforage.config({
   name: '3DGameEditor',
   storeName: 'scenes'
 });
 
+export interface SceneSettings {
+  gridReceiveShadow: boolean;
+  shadowSoftness: number;
+  environment: EnvironmentPreset;
+}
+
+export interface CameraSettings {
+  presets: CameraPreset[];
+  activePresetId: string | null;
+  paths: CameraPath[];
+  activePathId: string | null;
+}
+
+/**
+ * Persisted scene state. NOTE: File/Blob URLs cannot be preserved across sessions.
+ * When loading a saved version, models will have undefined URLs unless explicitly
+ * restored by the user (requires re-uploading files).
+ */
 export interface SceneState {
   versionId: string;
   timestamp: string;
   note: string;
-  models: any[];
-  prefabs?: any[];
-  sceneSettings: any;
-  layers?: any[];
-  cameraSettings?: {
-    presets: any[];
-    activePresetId: string | null;
-    paths: any[];
-    activePathId: string | null;
-  };
+  models: Omit<ModelData, 'url' | 'textureUrl' | 'normalMapUrl' | 'file' | 'textureFile' | 'normalMapFile'>[];
+  prefabs: Prefab[];
+  sceneSettings: SceneSettings;
+  layers: Layer[];
+  cameraSettings: CameraSettings;
   changesSummary?: {
     added: number;
     removed: number;
     edited: number;
   };
-  terrain?: any;
-  paths?: any[];
-  /** Collision zones and placement constraint data */
-  collisionZones?: any[];
+  terrain?: TerrainData;
+  paths: Path[];
+  collisionZones: CollisionZone[];
 }
 
+/**
+ * Save a version of the scene to history.
+ * NOTE: File/Blob URLs are discarded and cannot be restored.
+ * Users will need to re-upload files after loading a saved version.
+ */
 export const saveSceneVersion = async (
-  models: any[],
-  prefabs: any[],
-  sceneSettings: any,
+  models: ModelData[],
+  prefabs: Prefab[],
+  sceneSettings: SceneSettings,
   note: string = 'Manual Save',
-  cameraSettings?: any,
-  layers?: any[],
-  terrain?: any,
-  paths?: any[],
-  collisionZones?: any[]
-) => {
+  cameraSettings?: CameraSettings,
+  layers?: Layer[],
+  terrain?: TerrainData,
+  paths?: Path[],
+  collisionZones?: CollisionZone[]
+): Promise<SceneState> => {
   const versionId = Date.now().toString();
+
+  // Discard transient fields (URLs, File objects) before persisting
+  const persistedModels = models.map(m => {
+    const { url, file, textureUrl, textureFile, normalMapUrl, normalMapFile, ...rest } = m;
+    return rest;
+  });
+
   const state: SceneState = {
     versionId,
     timestamp: new Date().toISOString(),
     note,
-    models: models.map(m => ({
-      ...m,
-      url: undefined,        // Don't save blob URLs, they expire
-      textureUrl: undefined
-    })),
+    models: persistedModels,
     prefabs,
     sceneSettings,
-    cameraSettings,
-    layers,
+    layers: layers ?? [],
+    cameraSettings: cameraSettings ?? { presets: [], activePresetId: null, paths: [], activePathId: null },
     terrain,
-    paths,
+    paths: paths ?? [],
     collisionZones: collisionZones ?? [],
   };
 
   const history: SceneState[] = await localforage.getItem('scene_history') || [];
 
+  // Calculate change summary
   let added = 0, removed = 0, edited = 0;
   if (history.length > 0) {
     const lastState = history[history.length - 1];
@@ -82,89 +111,120 @@ export const saveSceneVersion = async (
   return state;
 };
 
+/**
+ * Load a version of the scene from history.
+ * WARNING: File/Blob URLs are NOT restored because they cannot be persisted.
+ * Loaded models will have undefined URLs and will need explicit re-upload or
+ * fallback to placeholder/stub geometries.
+ */
 export const loadSceneVersion = async (versionId: string): Promise<SceneState | null> => {
   const history: SceneState[] = await localforage.getItem('scene_history') || [];
   const state = history.find(s => s.versionId === versionId);
   if (!state) return null;
 
-  const restoredModels = state.models.map(m => {
-    const restored = { ...m };
-    if (restored.file) {
-      try { restored.url = URL.createObjectURL(restored.file); }
-      catch (e) { console.error('Failed to restore model file URL', e); }
-    }
-    if (restored.textureFile) {
-      try { restored.textureUrl = URL.createObjectURL(restored.textureFile); }
-      catch (e) { console.error('Failed to restore texture file URL', e); }
-    }
-    return restored;
-  });
-
+  // Ensure all optional fields have safe defaults
+  // Note: URLs remain undefined (cannot be restored)
   return {
     ...state,
-    models:         restoredModels,
-    prefabs:        state.prefabs        ?? [],
-    terrain:        state.terrain,
-    paths:          state.paths          ?? [],
+    prefabs: state.prefabs ?? [],
+    layers: state.layers ?? [],
+    cameraSettings: state.cameraSettings ?? {
+      presets: [],
+      activePresetId: null,
+      paths: [],
+      activePathId: null
+    },
+    terrain: state.terrain,
+    paths: state.paths ?? [],
     collisionZones: state.collisionZones ?? [],
   };
 };
 
 export const getVersionHistory = async (): Promise<SceneState[]> => {
-  return await localforage.getItem('scene_history') || [];
+  const history = await localforage.getItem('scene_history');
+  if (!history || !Array.isArray(history)) {
+    return [];
+  }
+  return history as SceneState[];
 };
 
+/**
+ * Auto-save the current scene state.
+ * NOTE: File/Blob URLs are discarded and cannot be restored.
+ */
 export const autoSaveScene = async (
-  models: any[],
-  prefabs: any[],
-  sceneSettings: any,
-  cameraSettings?: any,
-  layers?: any[],
-  terrain?: any,
-  paths?: any[],
-  collisionZones?: any[]
-) => {
+  models: ModelData[],
+  prefabs: Prefab[],
+  sceneSettings: SceneSettings,
+  cameraSettings?: CameraSettings,
+  layers?: Layer[],
+  terrain?: TerrainData,
+  paths?: Path[],
+  collisionZones?: CollisionZone[]
+): Promise<void> => {
+  // Discard transient fields
+  const persistedModels = models.map(m => {
+    const { url, file, textureUrl, textureFile, normalMapUrl, normalMapFile, ...rest } = m;
+    return rest;
+  });
+
   const state = {
     timestamp: new Date().toISOString(),
-    models: models.map(m => ({
-      ...m,
-      url: undefined,
-      textureUrl: undefined
-    })),
+    models: persistedModels,
     prefabs,
     sceneSettings,
-    cameraSettings,
-    layers,
+    cameraSettings: cameraSettings ?? { presets: [], activePresetId: null, paths: [], activePathId: null },
+    layers: layers ?? [],
     terrain,
-    paths,
+    paths: paths ?? [],
     collisionZones: collisionZones ?? [],
   };
+
   await localforage.setItem('autosave', state);
 };
 
-export const loadAutoSave = async (): Promise<any | null> => {
-  const state: any = await localforage.getItem('autosave');
-  if (!state) return null;
+export interface AutoSaveState {
+  timestamp: string;
+  models: Omit<ModelData, 'url' | 'textureUrl' | 'normalMapUrl' | 'file' | 'textureFile' | 'normalMapFile'>[];
+  prefabs: Prefab[];
+  sceneSettings: SceneSettings;
+  cameraSettings: CameraSettings;
+  layers: Layer[];
+  terrain?: TerrainData;
+  paths: Path[];
+  collisionZones: CollisionZone[];
+}
 
-  const restoredModels = state.models.map((m: any) => {
-    const restored = { ...m };
-    if (restored.file) {
-      try { restored.url = URL.createObjectURL(restored.file); }
-      catch (e) { console.error('Failed to restore model file URL', e); }
-    }
-    if (restored.textureFile) {
-      try { restored.textureUrl = URL.createObjectURL(restored.textureFile); }
-      catch (e) { console.error('Failed to restore texture file URL', e); }
-    }
-    return restored;
-  });
+/**
+ * Load auto-saved scene state.
+ * WARNING: URLs are not restored (cannot be persisted).
+ */
+export const loadAutoSave = async (): Promise<AutoSaveState | null> => {
+  const raw = await localforage.getItem('autosave');
+  if (!raw) return null;
 
+  // Type-cast from unknown to partial state object
+  const state = raw as Partial<AutoSaveState>;
+
+  // Type-safe defaults
   return {
-    ...state,
-    models:         restoredModels,
-    prefabs:        state.prefabs        ?? [],
-    terrain:        state.terrain,
-    paths:          state.paths          ?? [],
+    timestamp: state.timestamp ?? new Date().toISOString(),
+    models: state.models ?? [],
+    prefabs: state.prefabs ?? [],
+    sceneSettings: state.sceneSettings ?? {
+      gridReceiveShadow: true,
+      shadowSoftness: 0.5,
+      environment: DEFAULT_ENVIRONMENT
+    },
+    cameraSettings: state.cameraSettings ?? {
+      presets: [],
+      activePresetId: null,
+      paths: [],
+      activePathId: null
+    },
+    layers: state.layers ?? [],
+    terrain: state.terrain,
+    paths: state.paths ?? [],
     collisionZones: state.collisionZones ?? [],
   };
 };
