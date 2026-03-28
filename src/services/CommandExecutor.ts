@@ -10,8 +10,10 @@ import { Layer } from '../types/layers';
 import { Prefab } from '../types/prefabs';
 import { EnvironmentPreset, DEFAULT_ENVIRONMENT } from '../types/environment';
 import { CameraPreset, CameraPath } from '../types/camera';
+import { MaterialPreset } from '../types/materials';
 import { AICommand, AICommandPayload } from './AICommandService';
 import { CollisionZone, validatePlacementAgainstZones } from '../types/collision';
+import { MaterialService } from './MaterialService';
 
 export interface CommandExecutorContext {
   models: ModelData[];
@@ -24,6 +26,7 @@ export interface CommandExecutorContext {
   activeCameraPathId: string | null;
   prefabs: Prefab[];
   collisionZones: CollisionZone[];
+  materialLibrary: MaterialPreset[];
 }
 
 export interface CommandResult {
@@ -179,9 +182,12 @@ export class CommandExecutor {
   }
 
   private handleApplyMaterial(payload: any): CommandResult {
-    const { targetId, materialName } = payload;
-    if (!targetId || !materialName) {
-      return { success: false, message: 'Target ID and material name are required' };
+    const { targetId, materialName, materialId } = payload;
+    if (!targetId) {
+      return { success: false, message: 'Target ID is required' };
+    }
+    if (!materialName && !materialId) {
+      return { success: false, message: 'Material name or ID is required' };
     }
 
     const model = this.context.models.find(m => m.id === targetId);
@@ -189,11 +195,43 @@ export class CommandExecutor {
       return { success: false, message: `Model ${targetId} not found` };
     }
 
-    // TODO: Implement material application once material library is wired
-    // For now, this is a placeholder
+    // Look up the material from the library
+    let material: MaterialPreset | undefined;
+    if (materialId) {
+      material = this.context.materialLibrary.find(m => m.id === materialId);
+    } else if (materialName) {
+      // Try matching by name (case-insensitive)
+      material = this.context.materialLibrary.find(m =>
+        m.name.toLowerCase() === materialName.toLowerCase()
+      );
+    }
+
+    if (!material) {
+      const searchTerm = materialId || materialName;
+      return {
+        success: false,
+        message: `Material "${searchTerm}" not found in library`
+      };
+    }
+
+    // Validate the material
+    const validationError = MaterialService.validateMaterial(material);
+    if (validationError) {
+      return {
+        success: false,
+        message: `Invalid material: ${validationError}`
+      };
+    }
+
+    // Apply the material to the model
+    const updatedModel = MaterialService.applyMaterial(model, material);
+    const newModels = this.context.models.map(m => m.id === targetId ? updatedModel : m);
+    this.callbacks.onModelsChange(newModels);
+
     return {
-      success: false,
-      message: `Material application not yet implemented (requested: "${materialName}" on "${model.name}")`
+      success: true,
+      message: `Applied material "${material.name}" to "${model.name}"`,
+      affectedModelIds: [targetId]
     };
   }
 

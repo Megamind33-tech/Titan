@@ -924,6 +924,17 @@ export default function App() {
   }, [setAppState]);
 
   const handleExecuteAICommand = useCallback((command: any, onResult?: (result: { success: boolean; message: string }) => void) => {
+    // Load material presets from localStorage
+    let materialPresets: MaterialPreset[] = [];
+    const savedMaterials = localStorage.getItem('material_presets');
+    if (savedMaterials) {
+      try {
+        materialPresets = JSON.parse(savedMaterials);
+      } catch (e) {
+        console.warn('Failed to parse material presets from localStorage');
+      }
+    }
+
     // Create context for the command executor
     const executorContext: CommandExecutorContext = {
       models,
@@ -936,6 +947,7 @@ export default function App() {
       activeCameraPathId,
       prefabs,
       collisionZones: appState.collisionZones,
+      materialLibrary: materialPresets,
     };
 
     // Create callbacks for the executor to modify state
