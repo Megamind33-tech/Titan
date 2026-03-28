@@ -22,19 +22,42 @@ export type AICommandType =
   | 'explain'
   | 'suggest_optimization'
   | 'prepare_export'
-  // ─── Collision / Placement commands ────────────────────────────────────
-  | 'validate_placement'          // validate selected object against zones
-  | 'highlight_invalid_placements'// find & select all invalid objects
-  | 'place_in_zone'               // instruct to place objects inside a named zone
-  | 'list_zones'                  // describe current zones
-  | 'create_zone'                 // create a new zone
+  | 'validate_placement'
+  | 'highlight_invalid_placements'
+  | 'place_in_zone'
+  | 'list_zones'
+  | 'create_zone'
   | 'unknown';
+
+// Discriminated union for type-safe command payloads
+export type AICommandPayload =
+  | { type: 'place_asset'; assetName: string; position?: [number, number, number] }
+  | { type: 'update_transform'; targetId: string; position?: [number, number, number]; rotation?: [number, number, number]; scale?: [number, number, number] }
+  | { type: 'replace_asset'; targetId: string; newAssetName: string }
+  | { type: 'apply_material'; targetId: string; materialName: string }
+  | { type: 'swap_texture'; targetId: string; textureUrl: string }
+  | { type: 'update_lighting'; presetName: string }
+  | { type: 'update_camera'; presetName: string }
+  | { type: 'place_along_path'; assetName: string; pathId: string; count: number }
+  | { type: 'organize_layers'; targetIds: string[]; layerName: string }
+  | { type: 'lock_hide'; targetIds: string[]; action: 'lock' | 'unlock' | 'hide' | 'show' }
+  | { type: 'filter_by_tag'; tag: string }
+  | { type: 'update_tags'; targetIds: string[]; tags: string[]; action: 'add' | 'remove' }
+  | { type: 'explain'; topic: string }
+  | { type: 'suggest_optimization'; targetId?: string }
+  | { type: 'prepare_export'; format?: string }
+  | { type: 'validate_placement'; targetId: string }
+  | { type: 'highlight_invalid_placements' }
+  | { type: 'place_in_zone'; targetIds: string[]; zoneName: string; zoneType: string }
+  | { type: 'list_zones' }
+  | { type: 'create_zone'; name: string; type: string; position?: [number, number, number] }
+  | { type: 'unknown'; reason: string };
 
 export interface AICommand {
   type: AICommandType;
   description: string;
   requiresConfirmation: boolean;
-  payload: any;
+  payload: Record<string, any>; // Keep flexible at transport layer, will be validated during execution
 }
 
 export interface AICommandResponse {

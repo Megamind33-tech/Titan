@@ -3,16 +3,71 @@ import { saveAs } from 'file-saver';
 import * as THREE from 'three';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
+import { ModelData } from '../App';
+import { SceneSettings, CameraSettings } from './storageUtils';
+import { Layer } from '../types/layers';
+
+export interface ExportAssetManifest {
+  id: string;
+  name: string;
+  type: string;
+  layerId?: string;
+  visible: boolean;
+  locked: boolean;
+  file?: string;
+  transform: {
+    position: [number, number, number];
+    rotation: [number, number, number];
+    scale: [number, number, number];
+  };
+  material: {
+    wireframe: boolean;
+    lightIntensity: number;
+    castShadow: boolean;
+    receiveShadow: boolean;
+    texture?: string | null;
+  };
+  metadata?: Record<string, any>;
+  parent?: string | null;
+  version: number;
+}
+
+export interface SceneExportManifest {
+  version: string;
+  exportDate: string;
+  scene: {
+    lighting: {
+      ambient: number;
+      hemisphere: { intensity: number; color: string; groundColor: string };
+      directional: { intensity: number; position: [number, number, number] };
+      shadowSoftness: number;
+    };
+    gridReceiveShadow: boolean;
+    camera?: CameraSettings;
+    layers?: Layer[];
+  };
+  assets: ExportAssetManifest[];
+  exportSensitiveModels?: string[];
+}
+
+export interface ExportOptions {
+  selectedIds: string[];
+  format: 'original' | 'glb' | 'obj';
+  includeTextures: boolean;
+  includeMaterials: boolean;
+  cameraSettings?: CameraSettings;
+  layers?: Layer[];
+}
 
 export const exportScene = async (
-  models: any[], 
-  sceneSettings: any, 
+  models: ModelData[],
+  sceneSettings: SceneSettings,
   threeScene: THREE.Scene | null,
-  options: { selectedIds: string[], format: 'original' | 'glb' | 'obj', includeTextures: boolean, includeMaterials: boolean, cameraSettings?: any, layers?: any[] }
-) => {
+  options: ExportOptions
+): Promise<void> => {
   const zip = new JSZip();
-  
-  const manifest: any = {
+
+  const manifest: SceneExportManifest = {
     version: "1.0.0",
     exportDate: new Date().toISOString(),
     scene: {
