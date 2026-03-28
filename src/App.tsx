@@ -23,7 +23,7 @@ import { MaterialPreset } from './types/materials';
 import { EnvironmentPreset, DEFAULT_ENVIRONMENT } from './types/environment';
 import { CameraPreset, CameraPath, CameraCategory } from './types/camera';
 import { Layer, DEFAULT_LAYERS } from './types/layers';
-
+import { CollisionZone } from './types/collision';
 import { Prefab, PREFAB_CATEGORIES, PrefabCategory } from './types/prefabs';
 import { TerrainData } from './types/terrain';
 import { Path } from './types/paths';
@@ -89,6 +89,7 @@ interface AppState {
   layers: Layer[];
   terrain: TerrainData;
   paths: Path[];
+  collisionZones: CollisionZone[];
   activeProfileId: string;
   customProfile: QualitySettings;
 }
@@ -154,6 +155,7 @@ export default function App() {
       resolution: 64
     },
     paths: [],
+    collisionZones: [],
     activeProfileId: 'high',
     customProfile: DEFAULT_PROFILES[2].settings
   });
@@ -227,6 +229,25 @@ export default function App() {
       prefabs: typeof val === 'function' ? val(prev.prefabs) : val
     }));
   }, [setAppState]);
+
+  const setCollisionZones = useCallback((val: CollisionZone[] | ((prev: CollisionZone[]) => CollisionZone[])) => {
+    setAppState(prev => ({
+      ...prev,
+      collisionZones: typeof val === 'function' ? val(prev.collisionZones) : val
+    }));
+  }, [setAppState]);
+
+  const handleAddZone = useCallback((zone: CollisionZone) => {
+    setCollisionZones(prev => [...prev, zone]);
+  }, [setCollisionZones]);
+
+  const handleUpdateZone = useCallback((id: string, updates: Partial<CollisionZone>) => {
+    setCollisionZones(prev => prev.map(z => z.id === id ? { ...z, ...updates } : z));
+  }, [setCollisionZones]);
+
+  const handleDeleteZone = useCallback((id: string) => {
+    setCollisionZones(prev => prev.filter(z => z.id !== id));
+  }, [setCollisionZones]);
 
   const handleUpdateLayer = useCallback((id: string, updates: Partial<Layer>) => {
     setLayers(prev => prev.map(l => l.id === id ? { ...l, ...updates } : l));
@@ -1026,6 +1047,10 @@ export default function App() {
                 onHistoryClick={() => setIsHistoryModalOpen(true)}
                 onAssetLibraryClick={() => setIsAssetBrowserOpen(true)}
                 pluginUIVersion={pluginUIVersion}
+                collisionZones={appState.collisionZones}
+                onAddZone={handleAddZone}
+                onUpdateZone={handleUpdateZone}
+                onDeleteZone={handleDeleteZone}
               />
             )}
             
