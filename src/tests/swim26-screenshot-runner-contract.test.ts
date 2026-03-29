@@ -68,6 +68,7 @@ test('createExternalBabylonScreenshotCapture: unset SWIM26_REAL_SCREENSHOT_CMD â
       const result = await capture({ fixture, outputPath: path.join(dir, 'out.png') });
       assert.equal(result.ok, false);
       assert.equal(result.blocked, true);
+      assert.equal(result.failureClass, 'setup_failure');
       assert.ok(result.blockedReason, 'blockedReason must be set');
       assert.ok(
         result.blockedReason!.includes('SWIM26_REAL_SCREENSHOT_CMD'),
@@ -95,6 +96,7 @@ test('createExternalBabylonScreenshotCapture: invalid SWIM26_REAL_SCREENSHOT_CMD
       const result = await capture({ fixture, outputPath: path.join(dir, 'out.png') });
       assert.equal(result.ok, false);
       assert.equal(result.blocked, true);
+      assert.equal(result.failureClass, 'setup_failure');
       assert.ok(result.blockedReason?.includes('invalid JSON'));
     });
   } finally {
@@ -127,6 +129,7 @@ test('createExternalBabylonScreenshotCapture: runner exit 3 â†’ blocked=true', a
 
       assert.equal(result.ok, false);
       assert.equal(result.blocked, true, 'exit 3 must set blocked=true');
+      assert.equal(result.failureClass, 'blocked_environment');
       assert.ok(result.blockedReason, 'blockedReason must be set');
       assert.ok(
         result.blockedReason!.includes('blocked environment'),
@@ -156,6 +159,7 @@ test('createExternalBabylonScreenshotCapture: runner exit 1 (render failure) â†’
 
       assert.equal(result.ok, false);
       assert.equal(result.blocked, false, 'exit 1 (render failure) must NOT set blocked=true');
+      assert.equal(result.failureClass, 'runner_execution_failure');
       assert.ok(result.blockedReason, 'blockedReason should describe the failure');
     });
   } finally {
@@ -187,6 +191,7 @@ test('createExternalBabylonScreenshotCapture: runner exit 0 but no output file â
       // Exit 0 but no file is NOT a blocked-env condition.
       // The runner reached the environment but misbehaved.
       assert.equal(result.blocked, false);
+      assert.equal(result.failureClass, 'runner_execution_failure');
       assert.ok(
         result.blockedReason!.includes('without producing'),
         'blockedReason must mention missing output, got: ' + result.blockedReason
@@ -419,11 +424,13 @@ test('runSwim26RealScreenshotRegression: mock capture produces full pipeline res
     assert.equal(r.screenshotPass,     true,  'screenshot comparison must pass');
     assert.equal(r.fullPass,           true,  'fullPass requires all three');
     assert.equal(r.blocked,            false, 'must not be blocked');
+    assert.equal(r.failureClass,       'none');
     assert.equal(r.reasons.length,     0,     'no failure reasons expected');
 
     // Diff artifacts must be written
     assert.ok(fs.existsSync(r.diffPath),      'diff JSON must be written');
     assert.ok(fs.existsSync(r.diffImagePath), 'diff PPM image must be written');
+    assert.ok(fs.existsSync(path.join(outputDir, `${fixtureId}.host.verification.json`)), 'host verification report must be written');
 
     // Verify diff JSON structure
     const diff = JSON.parse(fs.readFileSync(r.diffPath, 'utf-8'));
@@ -431,10 +438,14 @@ test('runSwim26RealScreenshotRegression: mock capture produces full pipeline res
     assert.ok(diff.hostVerification,   'diff.hostVerification must be present');
     assert.ok(diff.screenshot,         'diff.screenshot must be present');
     assert.equal(diff.screenshot.pass, true);
+    assert.equal(diff.screenshot.failureClass, 'none');
     assert.equal(diff.screenshot.blocked, false);
     assert.ok(diff.screenshot.metadata, 'diff.screenshot.metadata must be present');
     assert.equal(diff.screenshot.metadata.captureMode, 'framebuffer');
     assert.equal(diff.screenshot.metadata.deterministicCameraId, 'swim26-fixed-overhead');
+    assert.ok(diff.screenshot.stdoutPath, 'stdout path must always be present');
+    assert.ok(diff.screenshot.stderrPath, 'stderr path must always be present');
+    assert.ok(diff.screenshot.hostReportPath, 'host report path must be present');
   });
 });
 
@@ -462,12 +473,14 @@ test('runSwim26RealScreenshotRegression: blocked capture â†’ diff JSON records b
     const r = results[0];
     assert.equal(r.fullPass,  false);
     assert.equal(r.blocked,   true);
+    assert.equal(r.failureClass, 'blocked_environment');
     assert.equal(r.blockedReason, BLOCKED_REASON);
     assert.ok(r.reasons.some(reason => reason === BLOCKED_REASON));
 
     // Diff JSON must distinguish blocked from regression
     const diff = JSON.parse(fs.readFileSync(r.diffPath, 'utf-8'));
     assert.equal(diff.screenshot.blocked, true);
+    assert.equal(diff.screenshot.failureClass, 'blocked_environment');
     assert.equal(diff.screenshot.blockedReason, BLOCKED_REASON);
     assert.equal(diff.screenshot.pass, false);
   });

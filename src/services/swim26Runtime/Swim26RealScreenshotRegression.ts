@@ -12,6 +12,7 @@ export interface Swim26ScreenshotFixture {
 export interface Swim26ScreenshotCaptureResult {
   ok: boolean;
   blocked?: boolean;
+  failureClass?: 'blocked_environment' | 'setup_failure' | 'runner_execution_failure';
   blockedReason?: string;
   screenshotPath?: string;
   metadataPath?: string;
@@ -50,6 +51,7 @@ export interface Swim26RealScreenshotRegressionResult {
   diffImagePath: string;
   diffPath: string;
   reasons: string[];
+  failureClass: 'none' | 'blocked_environment' | 'setup_failure' | 'runner_execution_failure' | 'host_verification_failure' | 'baseline_missing' | 'screenshot_parity_failure';
 }
 
 const decodePngRgba = (png: Buffer): { width: number; height: number; rgba: Buffer } => {
@@ -253,22 +255,26 @@ const resolveRunnerCommand = ():
 };
 
 export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCapture => async ({ fixture, outputPath }) => {
-  const resolvedCommand = resolveRunnerCommand();
-  if (!resolvedCommand.ok) {
-    const reason = 'reason' in resolvedCommand ? resolvedCommand.reason : 'Screenshot command is not configured.';
-    return {
-      ok: false,
-      blocked: true,
-      blockedReason: reason,
-    };
-  }
-  const { cmd, args: baseArgs, source } = resolvedCommand;
   // Derive the metadata path from the output path.  outputPath must end in .png.
   // If it does not, the metadata path will have '.capture.json' appended, which
   // is unusual but harmless — the runner receives --metadata explicitly.
   const metadataPath = /\.png$/i.test(outputPath)
     ? outputPath.replace(/\.png$/i, '.capture.json')
     : outputPath + '.capture.json';
+
+  const resolvedCommand = resolveRunnerCommand();
+  if (!resolvedCommand.ok) {
+    const reason = 'reason' in resolvedCommand ? resolvedCommand.reason : 'Screenshot command is not configured.';
+    return {
+      ok: false,
+      blocked: true,
+      failureClass: 'setup_failure',
+      blockedReason: reason,
+      screenshotPath: outputPath,
+      metadataPath,
+    };
+  }
+  const { cmd, args: baseArgs, source } = resolvedCommand;
   const proc = spawnSync(cmd, [...baseArgs, '--manifest', fixture.manifestPath, '--output', outputPath, '--metadata', metadataPath], {
     encoding: 'utf-8',
     stdio: 'pipe',
@@ -281,9 +287,12 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
     return {
       ok: false,
       blocked: true,
+      failureClass: 'setup_failure',
       blockedReason: isTimeout
         ? `External screenshot runner timed out after ${RUNNER_TIMEOUT_MS / 1000}s. Check that the runner is installed and the render environment is available.`
         : `External screenshot runner could not be started: ${proc.error.message}`,
+      screenshotPath: outputPath,
+      metadataPath,
       stderr: proc.stderr?.trim(),
       stdout: proc.stdout?.trim(),
       command: { cmd, args: baseArgs, source },
@@ -303,9 +312,12 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
     return {
       ok: false,
       blocked: isBlockedEnv,
+      failureClass: isBlockedEnv ? 'blocked_environment' : 'runner_execution_failure',
       blockedReason: isBlockedEnv
         ? `External runner reported blocked environment (exit ${proc.status}): ${blockedLine}`
         : `External Babylon screenshot command failed (exit ${proc.status}). See stderr in diff artifact.`,
+      screenshotPath: outputPath,
+      metadataPath,
       stderr,
       stdout: proc.stdout?.trim(),
       command: { cmd, args: baseArgs, source },
@@ -316,7 +328,10 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
     return {
       ok: false,
       blocked: false,
+      failureClass: 'runner_execution_failure',
       blockedReason: 'External Babylon screenshot command completed without producing the expected output file.',
+      screenshotPath: outputPath,
+      metadataPath,
       stdout: proc.stdout?.trim(),
       stderr: proc.stderr?.trim(),
       command: { cmd, args: baseArgs, source },
@@ -372,6 +387,7 @@ export const runSwim26RealScreenshotRegression = async (input: {
     const baselinePath = path.join(input.baselineDir, `${fixture.id}.png`);
     const diffPath = path.join(input.outputDir, `${fixture.id}.real.diff.json`);
     const diffImagePath = path.join(input.outputDir, `${fixture.id}.real.diff.ppm`);
+    const hostReportPath = path.join(input.outputDir, `${fixture.id}.host.verification.json`);
     const stdoutPath = path.join(input.outputDir, `${fixture.id}.runner.stdout.log`);
     const stderrPath = path.join(input.outputDir, `${fixture.id}.runner.stderr.log`);
     const reasons: string[] = [];
@@ -379,9 +395,11 @@ export const runSwim26RealScreenshotRegression = async (input: {
     if (!hostResult.pass) reasons.push('Host verification did not pass.');
     if (!hostResult.usedEngineLoaderPath) reasons.push('No SceneLoader engine loader evidence was recorded.');
 
+    fs.writeFileSync(hostReportPath, JSON.stringify(hostResult, null, 2), 'utf-8');
+
     const captureResult = await capture({ fixture, outputPath: actualPath });
-    if (captureResult.stdout) fs.writeFileSync(stdoutPath, captureResult.stdout + '\n', 'utf-8');
-    if (captureResult.stderr) fs.writeFileSync(stderrPath, captureResult.stderr + '\n', 'utf-8');
+    fs.writeFileSync(stdoutPath, (captureResult.stdout ?? '') + '\n', 'utf-8');
+    fs.writeFileSync(stderrPath, (captureResult.stderr ?? '') + '\n', 'utf-8');
     let screenshotPass = false;
     let blocked = false;
     let blockedReason: string | undefined;
@@ -389,11 +407,15 @@ export const runSwim26RealScreenshotRegression = async (input: {
     let changedPixels = 0;
     let totalPixels = 0;
 
+    let failureClass: Swim26RealScreenshotRegressionResult['failureClass'] = 'none';
+
     if (!captureResult.ok) {
       blocked = Boolean(captureResult.blocked);
       blockedReason = captureResult.blockedReason;
+      failureClass = captureResult.failureClass ?? (blocked ? 'blocked_environment' : 'runner_execution_failure');
       if (blockedReason) reasons.push(blockedReason);
     } else if (!fs.existsSync(baselinePath)) {
+      failureClass = 'baseline_missing';
       reasons.push('Real screenshot baseline is missing.');
     } else {
       if (requireFramebufferCapture && captureResult.metadata?.captureMode !== 'framebuffer') {
@@ -420,10 +442,15 @@ export const runSwim26RealScreenshotRegression = async (input: {
       writePpm({ width: actualRgba.width, height: actualRgba.height, rgb: compared.diffRgb, outputPath: diffImagePath });
 
       if (similarity < threshold) {
+        failureClass = 'screenshot_parity_failure';
         reasons.push(`Screenshot similarity ${similarity.toFixed(4)} is below threshold ${threshold.toFixed(4)}.`);
       } else {
         screenshotPass = true;
       }
+    }
+
+    if ((hostResult.pass === false || hostResult.usedEngineLoaderPath === false) && failureClass === 'none') {
+      failureClass = 'host_verification_failure';
     }
 
     const fullPass = hostResult.pass && hostResult.usedEngineLoaderPath && screenshotPass;
@@ -440,6 +467,7 @@ export const runSwim26RealScreenshotRegression = async (input: {
       },
       screenshot: {
         pass: screenshotPass,
+        failureClass,
         blocked,
         blockedReason,
         similarity,
@@ -449,13 +477,15 @@ export const runSwim26RealScreenshotRegression = async (input: {
         baselinePath,
         actualPath,
         diffImagePath,
+        hostReportPath,
         metadata: captureResult.metadata,
         metadataPath: captureResult.metadataPath,
         runnerCommand: captureResult.command,
-        stdoutPath: fs.existsSync(stdoutPath) ? stdoutPath : undefined,
-        stderrPath: fs.existsSync(stderrPath) ? stderrPath : undefined,
+        stdoutPath,
+        stderrPath,
       },
       reasons,
+      failureClass,
       stdout: captureResult.stdout,
       stderr: captureResult.stderr,
     }, null, 2), 'utf-8');
@@ -476,6 +506,7 @@ export const runSwim26RealScreenshotRegression = async (input: {
       diffImagePath,
       diffPath,
       reasons,
+      failureClass,
     });
   }
 

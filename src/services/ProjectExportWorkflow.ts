@@ -24,7 +24,7 @@ export const getProjectAwareExportConfig = (
     : normalizedAllowedFormats[0];
 
   const contextNote = normalizedAllowedFormats.includes('swim26-manifest')
-    ? 'SWIM26 Manifest is the runtime handoff target. GLB and Original are for raw asset delivery.'
+    ? 'For SWIM26 handoff, use SWIM26 Manifest. Use GLB or Original when you only need raw asset delivery.'
     : undefined;
 
   return {

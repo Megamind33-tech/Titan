@@ -32,7 +32,7 @@ export default function ProjectOnboardingModal({
         <div>
           <h2 className="text-white font-mono text-sm tracking-widest uppercase">WELCOME TO TITAN</h2>
           <p className="text-white/60 text-xs mt-2">
-            Choose your project path. If you are building SWIM26, start with the Babylon runtime option.
+            Start a new project or pick up where you left off. If you are building SWIM26, choose the Babylon option.
           </p>
         </div>
 
@@ -83,7 +83,7 @@ export default function ProjectOnboardingModal({
             data-testid="start-project-button"
             className="text-xs text-white bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/30 rounded px-4 py-2"
           >
-            START PROJECT
+            CREATE PROJECT
           </button>
         </div>
       </div>

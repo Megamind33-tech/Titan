@@ -91,6 +91,40 @@ const isBlockedFile = (path: string): boolean => {
 };
 
 type GitHubApiErrorPayload = { message?: string };
+type GitHubRepoApiPayload = {
+  private: boolean;
+  default_branch: string;
+  description?: string;
+  topics?: string[];
+  language?: string;
+  stargazers_count?: number;
+  updated_at?: string;
+};
+type GitHubDirectoryEntryPayload = {
+  name: string;
+  path: string;
+  type: 'file' | 'dir';
+  size?: number;
+  sha?: string;
+  download_url?: string | null;
+};
+
+const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const isGitHubRepoApiPayload = (value: unknown): value is GitHubRepoApiPayload => {
+  if (!isObjectRecord(value)) return false;
+  return typeof value.private === 'boolean' && typeof value.default_branch === 'string';
+};
+
+const isGitHubDirectoryEntryPayload = (value: unknown): value is GitHubDirectoryEntryPayload => {
+  if (!isObjectRecord(value)) return false;
+  return (
+    typeof value.name === 'string' &&
+    typeof value.path === 'string' &&
+    (value.type === 'file' || value.type === 'dir')
+  );
+};
 
 /**
  * GitHub Connector Service
@@ -238,19 +272,29 @@ export class GitHubConnector {
         };
       }
 
-      const data = await response.json() as any;
+      const payload: unknown = await response.json();
+      if (!isGitHubRepoApiPayload(payload)) {
+        return {
+          success: false,
+          error: new GitHubConnectorError(
+            GitHubConnectorErrorType.UNKNOWN,
+            'Unexpected repository metadata response shape from GitHub API.',
+            { owner: ref.owner, repo: ref.repo }
+          ),
+        };
+      }
 
       const metadata: GitHubRepoMetadata = {
         owner: ref.owner,
         repo: ref.repo,
         url: `https://github.com/${ref.owner}/${ref.repo}`,
-        isPrivate: data.private,
-        defaultBranch: data.default_branch,
-        description: data.description,
-        topics: data.topics,
-        language: data.language,
-        stars: data.stargazers_count,
-        lastUpdated: data.updated_at,
+        isPrivate: payload.private,
+        defaultBranch: payload.default_branch,
+        description: payload.description,
+        topics: Array.isArray(payload.topics) ? payload.topics : undefined,
+        language: payload.language,
+        stars: payload.stargazers_count,
+        lastUpdated: payload.updated_at,
       };
 
       // If private and no authenticated token (or public-only mode), fail gracefully
@@ -332,8 +376,8 @@ export class GitHubConnector {
         };
       }
 
-      const data = await response.json() as any[];
-      if (!Array.isArray(data)) {
+      const payload: unknown = await response.json();
+      if (!Array.isArray(payload)) {
         return {
           success: false,
           error: new GitHubConnectorError(
@@ -344,13 +388,25 @@ export class GitHubConnector {
         };
       }
 
-      const files: GitHubFileInfo[] = data.map(item => ({
+      const entries = payload.filter(isGitHubDirectoryEntryPayload);
+      if (entries.length !== payload.length) {
+        return {
+          success: false,
+          error: new GitHubConnectorError(
+            GitHubConnectorErrorType.UNKNOWN,
+            'Unexpected directory listing response shape from GitHub API.',
+            { path: dirPath, branch }
+          ),
+        };
+      }
+
+      const files: GitHubFileInfo[] = entries.map(item => ({
         name: item.name,
         path: item.path,
         type: item.type,
         size: item.size,
         sha: item.sha,
-        downloadUrl: item.download_url,
+        downloadUrl: item.download_url || undefined,
       }));
 
       return {

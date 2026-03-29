@@ -32,6 +32,8 @@ import {
   getProjectSelectionGuidance,
 } from './ProjectAdapterRegistry';
 
+type ProjectSelectionGuidance = ReturnType<typeof getProjectSelectionGuidance>;
+
 /**
  * Validation result for import
  */
@@ -49,7 +51,7 @@ export interface ImportPreparationResult {
   repoRef: GitHubRepoReference | null;
   metadata: ProjectMetadataProbe | null;
   detection: RepoDetectionResult | null;
-  guidance: any; // ProjectSelectionGuidance
+  guidance: ProjectSelectionGuidance | null;
   errors: string[];
   warnings: string[];
 }

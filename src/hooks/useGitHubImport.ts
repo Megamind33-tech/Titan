@@ -10,7 +10,7 @@
 
 import { useState, useCallback } from 'react';
 import { ProjectSession } from '../types/projectSession';
-import { GitHubRepoImporter } from '../services/GitHubRepoImporter';
+import { GitHubRepoImporter, ImportPreparationResult } from '../services/GitHubRepoImporter';
 import { LoadedSceneData } from '../services/Swim26ManifestLoader';
 
 /**
@@ -62,28 +62,34 @@ export interface UseGitHubImportState {
  */
 export interface UseGitHubImportReturn extends UseGitHubImportState {
   importRepository: (repoInput: string, profileIdHint?: string, authToken?: string) => Promise<void>;
-  prepareImport: (repoInput: string, authToken?: string) => Promise<any>;
+  prepareImport: (repoInput: string, authToken?: string) => Promise<ImportPreparationResult | null>;
   clear: () => void;
-  retry: () => Promise<void>;
+  retry: (authToken?: string) => Promise<void>;
 }
 
+const scrubSecrets = (raw: string): string => raw.replace(/gh[pousr]_[A-Za-z0-9_]+/g, '[redacted-token]');
+
 const toFriendlyImportError = (raw: string): string => {
-  if (raw.startsWith('PRIVATE_REPO_AUTH_REQUIRED:')) {
-    return 'This repository appears private. Add a read-only GitHub token and try again.';
+  const sanitized = scrubSecrets(raw);
+  if (sanitized.startsWith('PRIVATE_REPO_AUTH_REQUIRED:')) {
+    return 'This repo looks private. Add a read-only GitHub token, then try again.';
   }
-  if (raw.startsWith('INVALID_TOKEN:')) {
-    return 'That token was rejected by GitHub. Verify the token and retry.';
+  if (sanitized.startsWith('INVALID_TOKEN:')) {
+    return 'GitHub rejected that token. Check it and try again.';
   }
-  if (raw.startsWith('SSO_AUTH_REQUIRED:')) {
-    return 'This org requires SSO authorization for your token. Authorize it in GitHub, then retry.';
+  if (sanitized.startsWith('SSO_AUTH_REQUIRED:')) {
+    return 'This organization requires SSO for this token. Authorize it in GitHub, then retry.';
   }
-  if (raw.startsWith('INSUFFICIENT_SCOPE:')) {
+  if (sanitized.startsWith('INSUFFICIENT_SCOPE:')) {
     return 'Your token does not have required repository read permission for this repo.';
   }
-  if (raw.startsWith('RATE_LIMITED:')) {
-    return 'GitHub rate limit was reached. Wait and retry, or use an authorized token.';
+  if (sanitized.startsWith('RATE_LIMITED:')) {
+    return 'GitHub rate limit reached. Wait and retry, or use an authorized token.';
   }
-  return raw;
+  if (sanitized.startsWith('REPO_NOT_FOUND:')) {
+    return 'Repository not found. Check owner/repo and branch, or provide a token if this repository is private.';
+  }
+  return sanitized;
 };
 
 /**
@@ -98,6 +104,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
   });
 
   const [lastInput, setLastInput] = useState<string>('');
+  const [lastProfileIdHint, setLastProfileIdHint] = useState<string | undefined>(undefined);
   const [importer] = useState(() => new GitHubRepoImporter());
 
   const updateProgress = useCallback((phase: ImportPhase, message: string, percentComplete: number) => {
@@ -111,6 +118,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
   const importRepository = useCallback(
     async (repoInput: string, profileIdHint?: string, authToken?: string) => {
       setLastInput(repoInput);
+      setLastProfileIdHint(profileIdHint);
 
       try {
         // Phase 1: Validate input
@@ -130,7 +138,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
         updateProgress('detecting', 'Detecting project type...', 25);
 
         // Phase 3: Fetch and ingest repository
-        updateProgress('loading', 'Loading repository data from GitHub...', 40);
+        updateProgress('loading', 'Importing repository data from GitHub...', 40);
         const result = await importer.importRepository(repoInput, profileIdHint, authToken);
 
         if (!result.success) {
@@ -145,7 +153,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
         }
 
         // Phase 4: Create session
-        updateProgress('creating-session', 'Creating project session...', 80);
+        updateProgress('creating-session', 'Setting up your project...', 80);
 
         if (!result.session) {
           setState(prev => ({
@@ -158,7 +166,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
         }
 
         // Complete
-        updateProgress('complete', 'Import complete!', 100);
+        updateProgress('complete', 'Import complete.', 100);
         setState(prev => ({
           ...prev,
           result: {
@@ -174,7 +182,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
           error: null,
         }));
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = toFriendlyImportError(error instanceof Error ? error.message : String(error));
         setState(prev => ({
           ...prev,
           error: message,
@@ -197,16 +205,20 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
           setState(prev => ({
             ...prev,
             error: friendlyError,
+            progress: { phase: 'error', message: friendlyError, percentComplete: 0 },
+            isLoading: false,
           }));
           return null;
         }
 
         return preparation;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = toFriendlyImportError(error instanceof Error ? error.message : String(error));
         setState(prev => ({
           ...prev,
           error: message,
+          progress: { phase: 'error', message, percentComplete: 0 },
+          isLoading: false,
         }));
         return null;
       }
@@ -222,13 +234,14 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
       isLoading: false,
     });
     setLastInput('');
+    setLastProfileIdHint(undefined);
   }, []);
 
-  const retry = useCallback(async () => {
+  const retry = useCallback(async (authToken?: string) => {
     if (lastInput) {
-      await importRepository(lastInput);
+      await importRepository(lastInput, lastProfileIdHint, authToken);
     }
-  }, [lastInput, importRepository]);
+  }, [lastInput, lastProfileIdHint, importRepository]);
 
   return {
     ...state,
@@ -248,10 +261,10 @@ export const getPhaseMessage = (phase: ImportPhase, customMessage?: string): str
   const messages: Record<ImportPhase, string> = {
     idle: 'Ready to import',
     validating: 'Validating repository...',
-    detecting: 'Detecting project type...',
-    loading: 'Loading from GitHub...',
-    'creating-session': 'Creating project session...',
-    complete: 'Import complete!',
+    detecting: 'Checking project type...',
+    loading: 'Importing from GitHub...',
+    'creating-session': 'Setting up project...',
+    complete: 'Import complete.',
     error: 'Import failed',
   };
 
