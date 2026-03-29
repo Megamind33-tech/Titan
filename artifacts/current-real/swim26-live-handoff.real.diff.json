@@ -26,7 +26,8 @@
     "perChannelTolerance": 6,
     "baselinePath": "/home/user/Titan/artifacts/baselines-real/swim26-live-handoff.png",
     "actualPath": "/home/user/Titan/artifacts/current-real/swim26-live-handoff.png",
-    "diffImagePath": "/home/user/Titan/artifacts/current-real/swim26-live-handoff.real.diff.ppm"
+    "diffImagePath": "/home/user/Titan/artifacts/current-real/swim26-live-handoff.real.diff.ppm",
+    "stdoutPath": "/home/user/Titan/artifacts/current-real/swim26-live-handoff.runner.stdout.log"
   },
   "reasons": [
     "No GPU/headless Babylon runtime available in CI image."

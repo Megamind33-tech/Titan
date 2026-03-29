@@ -371,7 +371,7 @@ export const exportScene = async (
       name: p.name,
       points: p.points,
       loop: p.loop,
-      interpolation: p.interpolation,
+      interpolation: p.interpolation ?? 'linear',
     }));
 
     // Export quality settings if provided

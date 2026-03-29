@@ -302,6 +302,7 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
           onTransformEnd();
         }}
         onObjectChange={(e) => {
+          if (!e) return;
           const target = e.target as any;
           if (target.object) {
             if (transformMode === 'translate') {

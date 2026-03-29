@@ -446,7 +446,7 @@ export default function InspectorPanel({
               value={model.layerId || 'env'}
               onChange={(e) => onUpdateModel(model.id, { layerId: e.target.value })}
             >
-              {layers.sort((a, b) => a.order - b.order).map(layer => (
+              {layers.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(layer => (
                 <option key={layer.id} value={layer.id} className="bg-[#1a1b1e] text-white">
                   {layer.name}
                 </option>

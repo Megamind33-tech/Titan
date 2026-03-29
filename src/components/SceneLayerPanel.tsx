@@ -238,7 +238,7 @@ export default function SceneLayerPanel({
           </div>
         )}
 
-        {layers.sort((a, b) => a.order - b.order).map(layer => {
+        {layers.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map(layer => {
           const layerModels = getModelsInLayer(layer.id);
           const isExpanded = expandedLayers.has(layer.id);
 

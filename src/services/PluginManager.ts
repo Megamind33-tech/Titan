@@ -130,7 +130,7 @@ class PluginManager {
           }
           this.uiExtensions.get(pluginId)!.push(ext);
           // Trigger UI update
-          this.coreApi?.triggerUIUpdate();
+          this.coreApi?.triggerUIUpdate?.();
         },
         unregisterExtension: (extId) => {
           const exts = this.uiExtensions.get(pluginId) || [];
@@ -139,7 +139,7 @@ class PluginManager {
             assertUiPermission(getUIPermissionForExtensionType(target.type));
           }
           this.uiExtensions.set(pluginId, exts.filter(e => e.id !== extId));
-          this.coreApi?.triggerUIUpdate();
+          this.coreApi?.triggerUIUpdate?.();
         }
       },
       data: {
@@ -208,7 +208,7 @@ class PluginManager {
       }
       // Clean up UI extensions
       this.uiExtensions.delete(id);
-      this.coreApi?.triggerUIUpdate();
+      this.coreApi?.triggerUIUpdate?.();
 
       this.pluginStates.set(id, 'initialized');
     } catch (error) {

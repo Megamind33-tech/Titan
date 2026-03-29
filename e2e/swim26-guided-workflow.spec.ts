@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('SWIM26 guided project workflow', () => {
-  test('first run onboarding -> select SWIM26 -> export shows SWIM26 target', async ({ page }) => {
+  test('first run onboarding -> select SWIM26 -> export shows SWIM26 target', async ({ page }: { page: any }) => {
     await page.goto('http://127.0.0.1:3000');
 
     await expect(page.getByTestId('project-onboarding-modal')).toBeVisible();
@@ -22,7 +22,7 @@ test.describe('SWIM26 guided project workflow', () => {
     await expect(page.getByText(/runtime handoff metadata/i)).toBeVisible();
   });
 
-  test('invalid session recovery prompts setup review', async ({ page }) => {
+  test('invalid session recovery prompts setup review', async ({ page }: { page: any }) => {
     await page.goto('http://127.0.0.1:3000?projectProfile=profile.invalid');
 
     await expect(page.getByTestId('project-session-recovery-banner')).toBeVisible();
