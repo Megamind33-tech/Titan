@@ -125,28 +125,47 @@ export const importSwim26Manifest = (input: string | Swim26SceneManifest): Swim2
   if (!isV110) {
     warnings.push({
       path: 'version',
-      message: 'Manifest is v1.0.0 without stable authoredId; using synthesized IDs for round-trip (may not match original)',
+      message: 'Manifest v1.0.0 (no stable authoredId): Using synthetic IDs from object name+position. ' +
+               'Round-trip will fail if objects are moved or properties changed. Use v1.1.0 for reliable round-trip.',
       severity: 'warning',
     });
   }
 
-  const scene: ImportedSwim26Scene = {
-    nodes: manifest.authoredContent.objects.map(obj => {
-      // Use authoredId from manifest (v1.1.0+) or synthesize deterministic ID for backward compat
-      const nodeId = isV110 && (obj as any).authoredId
-        ? (obj as any).authoredId
-        : generateDeterministicId({ name: obj.name, position: obj.transform.position, assetRef: obj.assetRef });
+  // Process nodes with duplicate ID detection
+  const nodesByAuthoredId = new Map<string, ImportedSwim26Node>();
+  const processedNodes: ImportedSwim26Node[] = [];
 
-      return {
-        id: nodeId,  // This is the stable round-trip ID
-        name: obj.name || nodeId,
-        transform: obj.transform,
-        assetRef: normalizeAssetRef(obj.assetRef),
-        material: normalizeMaterial(obj.material),
-        tags: isStringArray(obj.tags) ? obj.tags : [],
-        metadata: isPlainObject(obj.metadata) ? obj.metadata : {},
-      };
-    }),
+  for (const obj of manifest.authoredContent.objects) {
+    // Use authoredId from manifest (v1.1.0+) or synthesize deterministic ID for backward compat
+    const nodeId = isV110 && (obj as any).authoredId
+      ? (obj as any).authoredId
+      : generateDeterministicId({ name: obj.name, position: obj.transform.position, assetRef: obj.assetRef });
+
+    // Check for duplicate authoredId
+    if (nodesByAuthoredId.has(nodeId)) {
+      warnings.push({
+        path: `authoredContent.objects[${processedNodes.length}]`,
+        message: `Duplicate authoredId detected: "${nodeId}". Objects with same ID will conflict during sync. Ensure all objects have unique IDs.`,
+        severity: 'warning',
+      });
+    }
+
+    const node: ImportedSwim26Node = {
+      id: nodeId,  // This is the stable round-trip ID
+      name: obj.name || nodeId,
+      transform: obj.transform,
+      assetRef: normalizeAssetRef(obj.assetRef),
+      material: normalizeMaterial(obj.material),
+      tags: isStringArray(obj.tags) ? obj.tags : [],
+      metadata: isPlainObject(obj.metadata) ? obj.metadata : {},
+    };
+
+    nodesByAuthoredId.set(nodeId, node);
+    processedNodes.push(node);
+  }
+
+  const scene: ImportedSwim26Scene = {
+    nodes: processedNodes,
     environment: manifest.authoredContent.environment
       ? {
           presetId: manifest.authoredContent.environment.presetId,

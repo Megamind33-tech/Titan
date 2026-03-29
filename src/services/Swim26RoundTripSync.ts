@@ -118,11 +118,12 @@ const applyNodeUpdate = (
   }
 
   // Update tags and authored metadata
-  if (node.tags.length > 0 || node.metadata) {
+  if (node.tags.length > 0 || Object.keys(node.metadata).length > 0) {
     updates.push('tags/metadata');
   }
 
-  // Preserve runtime-injected metadata, merge authored metadata
+  // Preserve runtime-injected metadata, only store authored data in explicit field
+  // CRITICAL: Do NOT spread node.metadata at end, as it can overwrite runtime state
   mesh.metadata = {
     ...mesh.metadata,
     authoredId: node.id,
@@ -130,8 +131,8 @@ const applyNodeUpdate = (
     authoredTags: node.tags,
     authoredAssetRef: node.assetRef,
     authoredMaterial: node.material,
+    authoredMetadata: node.metadata,  // Store separately, don't merge
     lastUpdateTime: Date.now(),
-    ...node.metadata,
   };
 
   // Log what was updated

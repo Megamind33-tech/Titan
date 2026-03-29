@@ -1,6 +1,7 @@
 import { importSwim26Manifest } from '../Swim26ManifestImporter';
 import { createBabylonAssetResolver, Swim26AssetResolver, validateRuntimeAssetRef } from './Swim26BabylonAssetLoader';
 import { buildRuntimeMaterialFromTitanHints } from './Swim26RuntimeMaterialPolicy';
+import { synchronizeSwim26ImportedScene } from '../Swim26RoundTripSync';
 import { BabylonLikeMesh, BabylonLikeScene, RuntimeDiagnostic } from './types';
 
 export interface Swim26RuntimeAssemblyResult {
@@ -22,15 +23,21 @@ const createPlaceholderMesh = (nodeId: string, name: string): BabylonLikeMesh =>
   position: { x: 0, y: 0, z: 0 },
   rotation: { x: 0, y: 0, z: 0 },
   scaling: { x: 1, y: 1, z: 1 },
+  metadata: {
+    authoredId: nodeId,  // Mark placeholder with authoredId for round-trip matching
+    isPlaceholder: true,
+  },
 });
 
 export const assembleSwim26RuntimeScene = async (input: {
   manifest: string | object;
   resolver?: Swim26AssetResolver;
+  existingScene?: BabylonLikeScene;  // For round-trip: update existing scene instead of creating new
 }): Promise<Swim26RuntimeAssemblyResult> => {
   const importResult = importSwim26Manifest(input.manifest as any);
   const diagnostics: RuntimeDiagnostic[] = [...importResult.warnings, ...importResult.errors];
-  const scene: BabylonLikeScene = { meshes: [] };
+  let scene: BabylonLikeScene = input.existingScene ?? { meshes: [] };
+  let isRoundTripImport = !!input.existingScene;
 
   if (!importResult.ok || !importResult.scene) {
     diagnostics.push({
@@ -39,6 +46,18 @@ export const assembleSwim26RuntimeScene = async (input: {
       message: 'Manifest import failed, runtime scene assembly aborted.',
     });
     return { ok: false, status: 'failed', scene, diagnostics };
+  }
+
+  // For round-trip imports: apply incremental sync instead of creating everything new
+  if (isRoundTripImport && input.existingScene) {
+    const syncResult = synchronizeSwim26ImportedScene(input.existingScene, importResult.scene.nodes);
+    diagnostics.push(
+      ...syncResult.result.diagnostics.map(d => ({
+        ...d,
+        code: 'ROUNDTRIP_SYNC',
+      }))
+    );
+    importResult.scene.nodes = syncResult.nodesToCreate;  // Only create nodes that are truly new
   }
 
   const resolver = input.resolver ?? createBabylonAssetResolver({
@@ -83,8 +102,9 @@ export const assembleSwim26RuntimeScene = async (input: {
       if (materialPolicy.material) mesh.material = materialPolicy.material;
       mesh.metadata = {
         ...(mesh.metadata ?? {}),
-        importedNodeId: node.id,
-        importedTags: node.tags,
+        authoredId: node.id,          // Use consistent authoredId field for round-trip
+        authoredName: node.name,
+        authoredTags: node.tags,
       };
       scene.meshes.push(mesh);
     }

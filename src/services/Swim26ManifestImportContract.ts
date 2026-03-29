@@ -50,8 +50,8 @@ export const validateSwim26Manifest = (manifest: unknown): Swim26ManifestValidat
     .filter(key => !supportedTopLevelKeys.includes(key))
     .forEach(key => warnings.push(asIssue(key, `Unknown top-level field "${key}" will be ignored by runtime importer.`, 'warning')));
 
-  if (typed.version !== '1.0.0') {
-    errors.push(asIssue('version', 'Only SWIM26 manifest version 1.0.0 is currently supported.', 'error'));
+  if (typed.version !== '1.0.0' && typed.version !== '1.1.0') {
+    errors.push(asIssue('version', 'Manifest version must be 1.0.0 or 1.1.0 (v1.1.0 supports stable round-trip authoredIds).', 'error'));
   }
   if (typed.runtime !== 'babylon') {
     errors.push(asIssue('runtime', 'Manifest runtime must be "babylon".', 'error'));
