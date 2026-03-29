@@ -9,6 +9,18 @@ type PluginScenePatch = Partial<{
 const hasStringId = (value: unknown): boolean =>
   typeof value === 'object' && value !== null && typeof (value as { id?: unknown }).id === 'string';
 
+const isValidId = (id: unknown): boolean => {
+  if (typeof id !== 'string') return false;
+  // IDs must be non-empty strings, max 256 chars
+  return id.length > 0 && id.length <= 256;
+};
+
+const isValidString = (value: unknown, fieldName: string, maxLength: number = 512): boolean => {
+  if (typeof value !== 'string') return false;
+  // Strings must be non-empty and within reasonable size
+  return value.length > 0 && value.length <= maxLength;
+};
+
 const isVec3 = (value: unknown): value is [number, number, number] =>
   Array.isArray(value) &&
   value.length === 3 &&
@@ -18,46 +30,97 @@ const isVec3 = (value: unknown): value is [number, number, number] =>
 const BUILTIN_SCENE_VALIDATORS = {
   models: (value: any): void => {
     if (!Array.isArray(value)) throw new Error('scene.update models must be an array');
-    for (const model of value) {
-      if (!hasStringId(model) || typeof model.name !== 'string' || typeof model.url !== 'string') {
-        throw new Error('scene.update model entries must include { id, name, url }');
+    if (value.length > 10000) throw new Error('scene.update models array exceeds maximum size (10000)');
+
+    for (let i = 0; i < value.length; i++) {
+      const model = value[i];
+
+      // Validate basic structure
+      if (!hasStringId(model)) {
+        throw new Error(`scene.update model[${i}]: id must be non-empty string`);
       }
+      if (!isValidId(model.id)) {
+        // isValidId returns false for both empty strings and strings > 256 chars
+        const length = (model.id as string).length;
+        if (length === 0) {
+          throw new Error(`scene.update model[${i}]: id must be non-empty string`);
+        } else {
+          throw new Error(`scene.update model[${i}]: id exceeds maximum length (256)`);
+        }
+      }
+      if (!isValidString(model.name, 'name')) {
+        throw new Error(`scene.update model[${i}]: name must be non-empty string`);
+      }
+      if (!isValidString(model.url, 'url')) {
+        throw new Error(`scene.update model[${i}]: url must be non-empty string`);
+      }
+
+      // Validate vectors
       if (!isVec3(model.position) || !isVec3(model.rotation) || !isVec3(model.scale)) {
-        throw new Error('scene.update model entries must include valid position/rotation/scale vectors');
+        throw new Error(`scene.update model[${i}]: must include valid position/rotation/scale vectors [number, number, number]`);
       }
     }
   },
 
   layers: (value: any): void => {
     if (!Array.isArray(value)) throw new Error('scene.update layers must be an array');
-    for (const layer of value) {
-      if (
-        !hasStringId(layer) ||
-        typeof layer.name !== 'string' ||
-        typeof layer.visible !== 'boolean' ||
-        typeof layer.locked !== 'boolean' ||
-        typeof layer.order !== 'number'
-      ) {
-        throw new Error('scene.update layer entries are malformed');
+    if (value.length > 10000) throw new Error('scene.update layers array exceeds maximum size (10000)');
+
+    for (let i = 0; i < value.length; i++) {
+      const layer = value[i];
+
+      if (!isValidId(layer.id)) {
+        throw new Error(`scene.update layer[${i}]: id must be non-empty string (max 256 chars)`);
+      }
+      if (!isValidString(layer.name, 'name')) {
+        throw new Error(`scene.update layer[${i}]: name must be non-empty string`);
+      }
+      if (typeof layer.visible !== 'boolean') {
+        throw new Error(`scene.update layer[${i}]: visible must be boolean`);
+      }
+      if (typeof layer.locked !== 'boolean') {
+        throw new Error(`scene.update layer[${i}]: locked must be boolean`);
+      }
+      if (typeof layer.order !== 'number' || !Number.isFinite(layer.order)) {
+        throw new Error(`scene.update layer[${i}]: order must be finite number`);
       }
     }
   },
 
   paths: (value: any): void => {
     if (!Array.isArray(value)) throw new Error('scene.update paths must be an array');
-    for (const path of value) {
-      if (
-        !hasStringId(path) ||
-        typeof path.name !== 'string' ||
-        typeof path.closed !== 'boolean' ||
-        typeof path.width !== 'number' ||
-        !Array.isArray(path.points)
-      ) {
-        throw new Error('scene.update path entries are malformed');
+    if (value.length > 10000) throw new Error('scene.update paths array exceeds maximum size (10000)');
+
+    for (let i = 0; i < value.length; i++) {
+      const path = value[i];
+
+      if (!isValidId(path.id)) {
+        throw new Error(`scene.update path[${i}]: id must be non-empty string (max 256 chars)`);
       }
-      for (const point of path.points) {
-        if (!hasStringId(point) || !isVec3(point.position)) {
-          throw new Error('scene.update path control points are malformed');
+      if (!isValidString(path.name, 'name')) {
+        throw new Error(`scene.update path[${i}]: name must be non-empty string`);
+      }
+      if (typeof path.closed !== 'boolean') {
+        throw new Error(`scene.update path[${i}]: closed must be boolean`);
+      }
+      if (typeof path.width !== 'number' || !Number.isFinite(path.width) || path.width <= 0) {
+        throw new Error(`scene.update path[${i}]: width must be positive finite number`);
+      }
+      if (!Array.isArray(path.points)) {
+        throw new Error(`scene.update path[${i}]: points must be array`);
+      }
+      if (path.points.length > 10000) {
+        throw new Error(`scene.update path[${i}].points exceeds maximum size (10000)`);
+      }
+
+      // Validate each control point
+      for (let j = 0; j < path.points.length; j++) {
+        const point = path.points[j];
+        if (!isValidId(point.id)) {
+          throw new Error(`scene.update path[${i}].points[${j}]: id must be non-empty string (max 256 chars)`);
+        }
+        if (!isVec3(point.position)) {
+          throw new Error(`scene.update path[${i}].points[${j}]: position must be [number, number, number]`);
         }
       }
     }
@@ -65,13 +128,29 @@ const BUILTIN_SCENE_VALIDATORS = {
 
   prefabs: (value: any): void => {
     if (!Array.isArray(value)) throw new Error('scene.update prefabs must be an array');
-    for (const prefab of value) {
-      if (!hasStringId(prefab) || typeof prefab.name !== 'string' || !Array.isArray(prefab.models)) {
-        throw new Error('scene.update prefab entries are malformed');
+    if (value.length > 10000) throw new Error('scene.update prefabs array exceeds maximum size (10000)');
+
+    for (let i = 0; i < value.length; i++) {
+      const prefab = value[i];
+
+      if (!isValidId(prefab.id)) {
+        throw new Error(`scene.update prefab[${i}]: id must be non-empty string (max 256 chars)`);
       }
-      for (const model of prefab.models) {
-        if (!hasStringId(model)) {
-          throw new Error('scene.update prefab model entries must include id');
+      if (!isValidString(prefab.name, 'name')) {
+        throw new Error(`scene.update prefab[${i}]: name must be non-empty string`);
+      }
+      if (!Array.isArray(prefab.models)) {
+        throw new Error(`scene.update prefab[${i}]: models must be array`);
+      }
+      if (prefab.models.length > 10000) {
+        throw new Error(`scene.update prefab[${i}].models exceeds maximum size (10000)`);
+      }
+
+      // Validate each model reference
+      for (let j = 0; j < prefab.models.length; j++) {
+        const model = prefab.models[j];
+        if (!isValidId(model.id)) {
+          throw new Error(`scene.update prefab[${i}].models[${j}]: id must be non-empty string (max 256 chars)`);
         }
       }
     }
@@ -109,6 +188,12 @@ const getSupportedSceneKeysAtValidationTime = (): Set<string> => {
 export const validatePluginScenePatch = (patch: unknown): PluginScenePatch => {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
     throw new Error('updateSceneState updater must return an object');
+  }
+
+  // CRITICAL: Seal validators on first validation to prevent runtime registration
+  // This ensures "startup-only" registration is actually enforced
+  if (!validatorsSealed) {
+    validatorsSealed = true;
   }
 
   // Snapshot supported keys at validation time (prevents race conditions)

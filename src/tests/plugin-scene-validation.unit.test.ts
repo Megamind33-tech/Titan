@@ -39,19 +39,19 @@ test('validatePluginScenePatch rejects malformed payloads and unsupported keys',
   assert.throws(() => validatePluginScenePatch({ models: {} }), /models must be an array/);
   assert.throws(
     () => validatePluginScenePatch({ models: [{ id: 'm1', name: 'x', url: '/x', position: [0, 0, 0], rotation: [0], scale: [1, 1, 1] }] }),
-    /valid position\/rotation\/scale vectors/
+    /must include valid position\/rotation\/scale vectors/
   );
   assert.throws(
     () => validatePluginScenePatch({ layers: [{ id: 'l1', name: 'L', visible: true, locked: false }] }),
-    /layer entries are malformed/
+    /must be boolean|must be finite/  // order field missing
   );
   assert.throws(
     () => validatePluginScenePatch({ paths: [{ id: 'p1', name: 'P', closed: false, width: 1, points: [{ id: 'pt1', position: [0, 0] }] }] }),
-    /control points are malformed/
+    /control points|position must be/
   );
   assert.throws(
     () => validatePluginScenePatch({ prefabs: [{ id: 'pf1', name: 'P', models: [{ notId: true }] }] }),
-    /prefab model entries must include id/
+    /id must be non-empty string/
   );
 });
 
@@ -81,7 +81,7 @@ test('validator enforces strict validation for each supported key', () => {
         scale: [1, 1, 1],
       }],
     }),
-    /model entries must include.*url/
+    /url must be non-empty string/
   );
 
   // Invalid layer missing required field
@@ -95,7 +95,7 @@ test('validator enforces strict validation for each supported key', () => {
         order: 0,
       }],
     }),
-    /layer entries are malformed/
+    /locked must be boolean/
   );
 
   // Invalid path with wrong point structure
@@ -112,7 +112,7 @@ test('validator enforces strict validation for each supported key', () => {
         }],
       }],
     }),
-    /control points are malformed/
+    /id must be non-empty string/
   );
 
   // Invalid prefab missing models array
@@ -124,7 +124,7 @@ test('validator enforces strict validation for each supported key', () => {
         // missing models
       }],
     }),
-    /prefab entries are malformed/
+    /models must be array/
   );
 });
 
@@ -152,7 +152,7 @@ test('validator remains safe when multiple keys are present', () => {
       models: [{ id: 'm1', name: 'M', url: '/m', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }],
       layers: [{ id: 'l1', name: 'L', visible: true, locked: false }], // missing order
     }),
-    /layer entries are malformed/
+    /order must be finite number/
   );
 
   // Invalid: one key valid, one unsupported
@@ -290,5 +290,120 @@ test('unsupported keys remain explicitly rejected even with custom validators re
       unknown_key: {}, // This one fails, whole patch rejected
     }),
     /Unsupported scene.update key: unknown_key/
+  );
+});
+
+test('validation deeply checks for empty strings and invalid field values', () => {
+  // Empty ID rejected
+  assert.throws(
+    () => validatePluginScenePatch({
+      models: [{
+        id: '',  // Empty ID - must fail
+        name: 'Model',
+        url: '/model.glb',
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      }],
+    }),
+    /id must be non-empty string/
+  );
+
+  // Empty name rejected
+  assert.throws(
+    () => validatePluginScenePatch({
+      models: [{
+        id: 'm1',
+        name: '',  // Empty name - must fail
+        url: '/model.glb',
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      }],
+    }),
+    /name must be non-empty string/
+  );
+
+  // Empty URL rejected
+  assert.throws(
+    () => validatePluginScenePatch({
+      models: [{
+        id: 'm1',
+        name: 'Model',
+        url: '',  // Empty URL - must fail
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      }],
+    }),
+    /url must be non-empty string/
+  );
+
+  // Invalid width (zero) rejected
+  assert.throws(
+    () => validatePluginScenePatch({
+      paths: [{
+        id: 'p1',
+        name: 'Path',
+        closed: false,
+        width: 0,  // Zero width - must fail
+        points: [{ id: 'pt1', position: [0, 0, 0] }],
+      }],
+    }),
+    /width must be positive finite number/
+  );
+
+  // Invalid width (negative) rejected
+  assert.throws(
+    () => validatePluginScenePatch({
+      paths: [{
+        id: 'p1',
+        name: 'Path',
+        closed: false,
+        width: -1,  // Negative width - must fail
+        points: [{ id: 'pt1', position: [0, 0, 0] }],
+      }],
+    }),
+    /width must be positive finite number/
+  );
+});
+
+test('validation rejects arrays exceeding size limits to prevent memory attacks', () => {
+  // 10001 models should be rejected
+  const hugeModelArray = Array(10001).fill({
+    id: 'm1',
+    name: 'M',
+    url: '/m',
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+  });
+
+  assert.throws(
+    () => validatePluginScenePatch({ models: hugeModelArray }),
+    /exceeds maximum size/
+  );
+
+  // But 10000 models should pass
+  const maxModelArray = Array(10000).fill({
+    id: 'm1',
+    name: 'M',
+    url: '/m',
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+  });
+
+  assert.doesNotThrow(() => validatePluginScenePatch({ models: maxModelArray }));
+});
+
+test('validator sealing prevents registration after first validation', () => {
+  // First validation happens - seals validators
+  assert.doesNotThrow(() => validatePluginScenePatch({ models: [] }));
+
+  // Now try to register a new validator - should fail
+  assert.throws(
+    () => registerSceneKeyValidator('late_registration', () => {}),
+    /Cannot register validators after validation has started/
   );
 });

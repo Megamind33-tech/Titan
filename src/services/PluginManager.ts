@@ -1,4 +1,5 @@
 import { Plugin, PluginMetadata, PluginState, PluginAPI, UIExtensionPoint } from '../types/plugin';
+import { resetSceneValidators } from './PluginSceneValidation';
 
 interface PluginCoreApi {
   getSceneState?: () => any;
@@ -274,6 +275,10 @@ class PluginManager {
     }
     this.coreApi = null;
     this.hasHydratedPluginData = false;
+
+    // CRITICAL: Reset scene validators when plugin manager resets
+    // Ensures scene validator singleton state doesn't leak between test runs
+    resetSceneValidators();
   }
 
   // Test helper alias.
