@@ -42,9 +42,11 @@ import { createProjectSession, loadProjectSession, persistProjectSession } from 
 import { getProjectSelectionGuidance } from './services/ProjectAdapterRegistry';
 import ProjectOnboardingModal from './components/ProjectOnboardingModal';
 import { getProjectAwareExportConfig } from './services/ProjectExportWorkflow';
+import { generateAuthoredId } from './utils/idUtils';
 
 export interface ModelData {
   id: string;
+  authoredId: string;  // Stable round-trip identifier (UUID v4), never changes
   name: string;
   url: string;
   assetId?: string;
@@ -387,6 +389,7 @@ export default function App() {
       return {
         ...(pm as any),
         id: crypto.randomUUID(),
+        authoredId: generateAuthoredId(),  // New authoredId for prefab instance
         prefabId: prefab.id,
         prefabInstanceId: instanceId,
         position: (isRoot ? position : [
@@ -751,6 +754,7 @@ export default function App() {
 
     const newModel: ModelData = {
       id: Date.now().toString(),
+      authoredId: generateAuthoredId(),  // Stable round-trip ID
       name: file.name,
       url,
       file,
@@ -775,6 +779,7 @@ export default function App() {
   const handlePlaceAsset = useCallback((asset: Asset, position: [number, number, number] = [0, 0, 0]) => {
     const newModel: ModelData = {
       id: Date.now().toString() + Math.random().toString(36).substring(7),
+      authoredId: generateAuthoredId(),  // Stable round-trip ID
       name: asset.metadata.name,
       url: asset.url,
       assetId: asset.id,
@@ -786,8 +791,8 @@ export default function App() {
       lightIntensity: asset.metadata.type === 'light' ? 1 : 0,
       castShadow: true,
       receiveShadow: true,
-      type: asset.metadata.type === 'model' ? 'model' : 
-            asset.metadata.type === 'light' ? 'light' : 
+      type: asset.metadata.type === 'model' ? 'model' :
+            asset.metadata.type === 'light' ? 'light' :
             asset.metadata.type === 'environment' ? 'environment' : 'model',
       visible: true,
       locked: false,
@@ -810,6 +815,7 @@ export default function App() {
     const clones = placements.map((placement, index): ModelData => ({
       ...sourceModel,
       id: newIds[index],
+      authoredId: generateAuthoredId(),  // Each clone gets a new authoredId
       position: placement.position,
       rotation: placement.rotation,
       parentId: null,
@@ -835,6 +841,7 @@ export default function App() {
     const ids = placements.map((_, index) => `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`);
     const created: ModelData[] = placements.map((placement, index) => ({
       id: ids[index],
+      authoredId: generateAuthoredId(),  // Each placement gets a new authoredId
       name: asset.metadata.name,
       url: asset.url,
       assetId: asset.id,
@@ -1020,6 +1027,7 @@ export default function App() {
       const newModel = {
         ...modelToDuplicate,
         id: Math.random().toString(36).substring(7),
+        authoredId: generateAuthoredId(),  // New authoredId for duplicate
         name: `${modelToDuplicate.name} (Copy)`,
         position: [modelToDuplicate.position[0] + 1, modelToDuplicate.position[1], modelToDuplicate.position[2] + 1] as [number, number, number],
         parentId: null,

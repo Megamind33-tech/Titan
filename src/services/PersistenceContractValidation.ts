@@ -22,6 +22,7 @@ import { Prefab } from '../types/prefabs';
 import { TerrainData } from '../types/terrain';
 import { Layer } from '../types/layers';
 import { DEFAULT_ENVIRONMENT } from '../types/environment';
+import { generateAuthoredId } from '../utils/idUtils';
 
 /**
  * Validation result with clear severity distinction
@@ -55,6 +56,7 @@ const MODEL_FIELD_DEFAULTS = {
   behaviorTags: [] as string[],
   classification: 'both' as const,
   metadata: {} as Record<string, any>,
+  authoredId: '',  // Will be generated if missing; cannot use generateAuthoredId() here
 };
 
 const SCENE_SETTINGS_DEFAULTS = {
@@ -190,6 +192,12 @@ export function repairPersistedModel(model: any): { repaired: ModelData; repairs
   if (!Array.isArray(repaired.behaviorTags)) {
     repaired.behaviorTags = [];
     repairs.push('Coerced behaviorTags to array');
+  }
+
+  // Ensure authoredId exists for round-trip support (migration for older scenes)
+  if (!isValidString(repaired.authoredId)) {
+    repaired.authoredId = generateAuthoredId();
+    repairs.push('Generated missing authoredId for round-trip support');
   }
 
   return { repaired, repairs };
