@@ -210,11 +210,30 @@ async function main() {
     // Load puppeteer from runner's own node_modules
     const puppeteer = require(puppeteerModulePath);
 
-    // Launch headless Chromium
-    // --no-sandbox + --disable-setuid-sandbox: required in CI/Docker
-    // --disable-gpu: force software renderer for determinism
-    // --disable-dev-shm-usage: prevents crash in low-memory CI environments
-    // --disable-background-timer-throttling: prevents render loop starvation
+    // Launch headless Chromium with software rendering.
+    //
+    // --no-sandbox + --disable-setuid-sandbox
+    //   Required in CI/Docker environments where running as root is common.
+    //
+    // --disable-gpu
+    //   Disables hardware GPU acceleration. Chromium falls back to software
+    //   rendering (SwiftShader) for WebGL. WebGL IS still available — this
+    //   flag does NOT disable WebGL. scene-renderer.html verifies this by
+    //   reading back the GL context type and renderer string.
+    //
+    // --use-gl=swiftshader
+    //   Explicitly selects SwiftShader as the WebGL implementation. Combined
+    //   with --disable-gpu this makes software WebGL deterministic across runs
+    //   on the same Chromium version. The GL renderer string will read
+    //   "Google SwiftShader" confirming software rendering is active.
+    //
+    // --disable-dev-shm-usage
+    //   Prevents Chromium from using /dev/shm, which is small in many Docker
+    //   and CI environments. Without this, Chromium may crash with OOM errors.
+    //
+    // --disable-background-timer-throttling + --disable-renderer-backgrounding
+    //   Prevents the Babylon render loop from being throttled when the page is
+    //   considered "backgrounded" by the headless renderer.
     browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -222,6 +241,7 @@ async function main() {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu',
+        '--use-gl=swiftshader',
         '--disable-background-timer-throttling',
         '--disable-renderer-backgrounding',
         '--disable-backgrounding-occluded-windows',

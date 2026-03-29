@@ -76,25 +76,58 @@ test('createExternalBabylonScreenshotCapture: unset SWIM26_REAL_SCREENSHOT_CMD �
 });
 
 // ─────────────────────────────────────────────────────────────
-// Runner exits 3 (BLOCKED_ENV) → capture returns blocked
+// Runner exits 3 → blocked (explicit blocked-env signal)
+// Runner exits 1 → ok=false but blocked=false (render failure, not env block)
+// These must be distinguished so callers can report accurately.
 // ─────────────────────────────────────────────────────────────
 
-test('createExternalBabylonScreenshotCapture: runner exit ≠ 0 → blocked', async () => {
+test('createExternalBabylonScreenshotCapture: runner exit 3 → blocked=true', async () => {
   const saved = process.env.SWIM26_REAL_SCREENSHOT_CMD;
 
   try {
     await withTemp(async (dir) => {
-      // Use a real script file so spawnSync gets clean args without shell quoting
       const scriptPath = path.join(dir, 'exit3.js');
-      fs.writeFileSync(scriptPath, "'use strict';\nprocess.exit(3);\n");
+      // Runner exits 3 with BLOCKED_ENV: on stderr — the canonical blocked signal
+      fs.writeFileSync(scriptPath,
+        "'use strict';\nprocess.stderr.write('[swim26-screenshot-runner] BLOCKED_ENV: puppeteer_not_installed\\n');\nprocess.exit(3);\n"
+      );
 
       process.env.SWIM26_REAL_SCREENSHOT_CMD = `node ${scriptPath}`;
       const capture = createExternalBabylonScreenshotCapture();
       const result = await capture({ fixture, outputPath: path.join(dir, 'out.png') });
 
       assert.equal(result.ok, false);
-      assert.equal(result.blocked, true);
-      assert.ok(result.blockedReason, 'blockedReason must be set when runner exits non-zero');
+      assert.equal(result.blocked, true, 'exit 3 must set blocked=true');
+      assert.ok(result.blockedReason, 'blockedReason must be set');
+      assert.ok(
+        result.blockedReason!.includes('blocked environment'),
+        'blockedReason must mention blocked environment, got: ' + result.blockedReason
+      );
+    });
+  } finally {
+    if (saved !== undefined) process.env.SWIM26_REAL_SCREENSHOT_CMD = saved;
+    else delete process.env.SWIM26_REAL_SCREENSHOT_CMD;
+  }
+});
+
+test('createExternalBabylonScreenshotCapture: runner exit 1 (render failure) → blocked=false', async () => {
+  const saved = process.env.SWIM26_REAL_SCREENSHOT_CMD;
+
+  try {
+    await withTemp(async (dir) => {
+      const scriptPath = path.join(dir, 'exit1.js');
+      // Runner exits 1 with RENDER_ERROR — present in env but rendering failed
+      fs.writeFileSync(scriptPath,
+        "'use strict';\nprocess.stderr.write('[swim26-screenshot-runner] RENDER_ERROR: Babylon.js Engine creation failed\\n');\nprocess.exit(1);\n"
+      );
+
+      process.env.SWIM26_REAL_SCREENSHOT_CMD = `node ${scriptPath}`;
+      const capture = createExternalBabylonScreenshotCapture();
+      const result = await capture({ fixture, outputPath: path.join(dir, 'out.png') });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.blocked, false, 'exit 1 (render failure) must NOT set blocked=true');
+      assert.ok(result.blockedReason, 'blockedReason should describe the failure');
     });
   } finally {
     if (saved !== undefined) process.env.SWIM26_REAL_SCREENSHOT_CMD = saved;
@@ -103,10 +136,12 @@ test('createExternalBabylonScreenshotCapture: runner exit ≠ 0 → blocked', as
 });
 
 // ─────────────────────────────────────────────────────────────
-// Runner exits 0 but writes no output file → blocked
+// Runner exits 0 but writes no output file → ok=false, blocked=false
+// (runner reached the environment but failed to write output — not a
+//  blocked-environment condition, a runner bug)
 // ─────────────────────────────────────────────────────────────
 
-test('createExternalBabylonScreenshotCapture: runner exit 0 but no output file → blocked', async () => {
+test('createExternalBabylonScreenshotCapture: runner exit 0 but no output file → ok=false blocked=false', async () => {
   const saved = process.env.SWIM26_REAL_SCREENSHOT_CMD;
 
   try {
@@ -120,7 +155,9 @@ test('createExternalBabylonScreenshotCapture: runner exit 0 but no output file �
       const result = await capture({ fixture, outputPath: path.join(dir, 'out.png') });
 
       assert.equal(result.ok, false);
-      assert.equal(result.blocked, true);
+      // Exit 0 but no file is NOT a blocked-env condition.
+      // The runner reached the environment but misbehaved.
+      assert.equal(result.blocked, false);
       assert.ok(
         result.blockedReason!.includes('without producing'),
         'blockedReason must mention missing output, got: ' + result.blockedReason

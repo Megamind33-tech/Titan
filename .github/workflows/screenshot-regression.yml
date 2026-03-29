@@ -4,19 +4,20 @@
 # compares output against baselines, and uploads artifacts for inspection.
 #
 # Environment requirements:
-#   - Ubuntu runner with Chromium system dependencies
+#   - Ubuntu runner with Chromium system dependencies (installed below)
 #   - Node.js >= 18
-#   - tools/babylon-screenshot-runner/node_modules must be installed
-#   - Chromium is downloaded automatically by puppeteer on first run (cached)
+#   - tools/babylon-screenshot-runner/node_modules installed via npm install
+#   - Chromium downloaded automatically by puppeteer (cached between runs)
 #
 # Blocked-environment behavior:
-#   If puppeteer/babylonjs are not installed, the runner exits with code 3
-#   (BLOCKED_ENV). The regression test reports this as `blocked: true` in the
-#   diff artifact, which is distinct from a true screenshot regression failure.
+#   Runner exit 3 + BLOCKED_ENV: on stderr → captured.blocked=true in diff JSON.
+#   Runner exit 1 → captured.blocked=false, screenshotPass=false (render failure).
+#   These are distinct: blocked means no framebuffer was possible; failed means
+#   framebuffer was reachable but rendering broke.
 #
 # Baseline management:
 #   Baselines live in artifacts/baselines-real/.
-#   To update baselines: run generate-baselines locally and commit the new PNGs.
+#   First CI run will report "baseline missing" — generate locally and commit.
 #   See BABYLON_SCREENSHOT_RUNNER.md for the baseline generation procedure.
 
 name: SWIM26 Screenshot Regression
@@ -31,6 +32,9 @@ on:
       - main
 
 jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 1: Full screenshot regression (requires puppeteer + Chromium)
+  # ─────────────────────────────────────────────────────────────────────────
   screenshot-regression:
     name: Babylon Screenshot Regression
     runs-on: ubuntu-latest
@@ -54,9 +58,15 @@ jobs:
 
       # ── Runner dependencies ───────────────────────────────────────────────
       # puppeteer downloads Chromium (~170MB) into ~/.cache/puppeteer.
-      # Cached by package.json hash so it survives across runs until deps change.
-      # Note: uses npm install (not npm ci) because package-lock.json for the
-      # runner is not committed. Commit it and switch to npm ci for reproducible installs.
+      # Cached by package.json hash so it survives runs until the dep changes.
+      #
+      # PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=false is set explicitly here because
+      # some CI environments set it to true globally. We must always have
+      # Chromium for this workflow to function.
+      #
+      # Uses npm install (not npm ci) because package-lock.json for the runner
+      # is not committed. To fix: run `npm install` in tools/babylon-screenshot-runner/
+      # locally, commit package-lock.json, then switch this step to `npm ci`.
       - name: Cache puppeteer Chromium
         uses: actions/cache@v4
         with:
@@ -67,11 +77,14 @@ jobs:
 
       - name: Install Babylon screenshot runner dependencies
         working-directory: tools/babylon-screenshot-runner
-        run: npm install --no-audit --prefer-offline
+        run: npm install --no-audit
+        env:
+          PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'false'
 
       # ── Chromium system libraries ─────────────────────────────────────────
-      # These are required for headless Chromium on Ubuntu GitHub Actions runners.
-      # The list matches what puppeteer's own CI setup requires.
+      # Required for headless Chromium on Ubuntu GitHub Actions runners.
+      # On ubuntu-latest most of these are pre-installed but are listed
+      # explicitly for reproducibility.
       - name: Install Chromium system dependencies
         run: |
           sudo apt-get update -qq
@@ -89,24 +102,30 @@ jobs:
 
       # ── Runner contract tests ─────────────────────────────────────────────
       # Validates exit codes, stderr signals, and output file contracts.
+      # Does NOT require rendering — runs before the full regression.
       - name: Run runner contract tests
         working-directory: tools/babylon-screenshot-runner
         run: node runner.test.js
 
       # ── Screenshot regression ─────────────────────────────────────────────
-      # Sets SWIM26_REAL_SCREENSHOT_CMD to the installed runner and executes
-      # Titan's regression test suite.
+      # Sets SWIM26_REAL_SCREENSHOT_CMD to the installed runner and runs the
+      # regression suite.  The test exits non-zero if any fixture's fullPass
+      # is false AND the failure is not a missing-baseline condition.
       #
-      # If no baselines exist: test reports `blocked: false` but `screenshotPass: false`
-      # with reason "Real screenshot baseline is missing." This is expected on first run.
-      # Generate baselines locally and commit them (see BABYLON_SCREENSHOT_RUNNER.md).
+      # If baselines are missing: test reports screenshotPass=false with reason
+      # "Real screenshot baseline is missing." which causes test failure.
+      # Fix: run `npm run baselines:generate` locally and commit the PNGs.
       - name: Run SWIM26 screenshot regression
         run: npm run test:swim26-real-render
         env:
           SWIM26_REAL_SCREENSHOT_CMD: node ${{ github.workspace }}/tools/babylon-screenshot-runner/runner.js
 
       # ── Artifact upload ───────────────────────────────────────────────────
-      # Always upload artifacts so failures are inspectable even on error exit.
+      # Always upload so failures are inspectable even on non-zero test exit.
+      # Includes: current screenshots, baselines, diff JSONs, metadata JSONs,
+      # and diff PPM images.  PPM files are not viewable in the GitHub UI —
+      # to view them locally: `convert foo.real.diff.ppm foo.real.diff.png`
+      # (ImageMagick) or open in GIMP/IrfanView.
       - name: Upload screenshot regression artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -118,25 +137,58 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # ── Summary ───────────────────────────────────────────────────────────
+      # ── Job summary ───────────────────────────────────────────────────────
+      # Parses diff JSON files and writes a per-fixture pass/fail/blocked table
+      # to the GitHub Actions job summary for quick inspection without downloading
+      # artifacts.
       - name: Write job summary
         if: always()
         run: |
           echo "## SWIM26 Screenshot Regression" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| File | Size |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
-          if [ -d "artifacts/current-real" ]; then
-            for f in artifacts/current-real/*; do
-              [ -f "$f" ] && echo "| $(basename $f) | $(du -sh $f | cut -f1) |" >> $GITHUB_STEP_SUMMARY
-            done
-          else
-            echo "| *(no artifacts)* | — |" >> $GITHUB_STEP_SUMMARY
-          fi
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Diff JSON reports in \`artifacts/current-real/*.real.diff.json\`" >> $GITHUB_STEP_SUMMARY
 
-  # Separate job: runner CLI contract validation only (fast, no GPU required)
+          DIFF_DIR="artifacts/current-real"
+          FOUND_DIFF=0
+
+          if [ -d "$DIFF_DIR" ]; then
+            for f in "$DIFF_DIR"/*.real.diff.json; do
+              [ -f "$f" ] || continue
+              FOUND_DIFF=1
+              FIXTURE=$(basename "$f" .real.diff.json)
+              FULL_PASS=$(node -e "try{var d=require('./$f');console.log(d.screenshot&&d.hostVerification?(d.screenshot.pass&&d.hostVerification.pass?'PASS':'FAIL'):'FAIL');}catch(e){console.log('FAIL');}")
+              BLOCKED=$(node -e "try{var d=require('./$f');console.log(d.screenshot.blocked?'yes':'no');}catch(e){console.log('unknown');}")
+              CAPTURE_MODE=$(node -e "try{var d=require('./$f');console.log((d.screenshot.metadata&&d.screenshot.metadata.captureMode)||'none');}catch(e){console.log('none');}")
+              GL_RENDERER=$(node -e "try{var d=require('./$f');console.log((d.screenshot.metadata&&d.screenshot.metadata.glRenderer)||'none');}catch(e){console.log('none');}")
+              SIMILARITY=$(node -e "try{var d=require('./$f');var s=d.screenshot.similarity;console.log(s!=null?s.toFixed(4):'—');}catch(e){console.log('—');}")
+              PLACEHOLDER=$(node -e "try{var d=require('./$f');console.log((d.screenshot.metadata&&d.screenshot.metadata.usedPlaceholderGeometry)?'yes':'no');}catch(e){console.log('unknown');}")
+              REASONS=$(node -e "try{var d=require('./$f');console.log((d.reasons||[]).join(' | ')||'none');}catch(e){console.log('unknown');}")
+
+              echo "### Fixture: \`$FIXTURE\`" >> $GITHUB_STEP_SUMMARY
+              echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+              echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+              echo "| Result | **$FULL_PASS** |" >> $GITHUB_STEP_SUMMARY
+              echo "| Blocked env | $BLOCKED |" >> $GITHUB_STEP_SUMMARY
+              echo "| Capture mode | $CAPTURE_MODE |" >> $GITHUB_STEP_SUMMARY
+              echo "| GL renderer | $GL_RENDERER |" >> $GITHUB_STEP_SUMMARY
+              echo "| Similarity | $SIMILARITY |" >> $GITHUB_STEP_SUMMARY
+              echo "| Placeholder geometry | $PLACEHOLDER |" >> $GITHUB_STEP_SUMMARY
+              echo "| Failure reasons | $REASONS |" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            done
+          fi
+
+          if [ "$FOUND_DIFF" -eq 0 ]; then
+            echo "No diff JSON files found in $DIFF_DIR." >> $GITHUB_STEP_SUMMARY
+            echo "Either the runner did not execute or the test suite did not run." >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** Diff images (\`.real.diff.ppm\`) require ImageMagick or GIMP to view." >> $GITHUB_STEP_SUMMARY
+          echo "To convert: \`convert foo.real.diff.ppm foo.real.diff.png\`" >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Job 2: Runner CLI contract validation (fast, no GPU required)
+  # ─────────────────────────────────────────────────────────────────────────
   runner-contract:
     name: Runner CLI Contract
     runs-on: ubuntu-latest
@@ -151,9 +203,11 @@ jobs:
         with:
           node-version: '20'
 
+      # This job validates arg parsing, exit codes, BLOCKED_ENV signals, and
+      # stderr prefix contract.  It does NOT require puppeteer or babylonjs to
+      # be installed.  The full render test inside runner.test.js is skipped
+      # with a clear "(skipped: puppeteer not installed)" message when dependencies
+      # are absent, so this job always finishes quickly.
       - name: Run runner contract tests (no puppeteer required)
         working-directory: tools/babylon-screenshot-runner
         run: node runner.test.js
-        # This job validates arg parsing, exit codes, and stderr signals.
-        # It does NOT require puppeteer to be installed — the full render test
-        # is skipped with an explicit "(skipped: puppeteer not installed)" message.
