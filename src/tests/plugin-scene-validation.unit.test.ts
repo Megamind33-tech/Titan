@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validatePluginScenePatch, registerSceneKeyValidator } from '../services/PluginSceneValidation';
+import { validatePluginScenePatch, registerSceneKeyValidator, resetSceneValidators } from '../services/PluginSceneValidation';
+
+test.beforeEach(() => {
+  resetSceneValidators();
+});
 
 test('validatePluginScenePatch accepts valid partial updates', () => {
   const valid = validatePluginScenePatch({
@@ -168,6 +172,7 @@ test('registerSceneKeyValidator enables safe schema expansion for future keys', 
     if (!Array.isArray(value)) throw new Error('custom_items must be an array');
   };
 
+  // Register at startup before validation
   registerSceneKeyValidator('custom_items', customValidator);
 
   // Custom key now accepted
@@ -177,12 +182,41 @@ test('registerSceneKeyValidator enables safe schema expansion for future keys', 
   assert.ok((result as any).custom_items);
   assert.equal(customValidatorCalls.length, 1);
 
-  // Custom key validates strictly
+  // Custom key validates strictly (failure path)
   assert.throws(
     () => validatePluginScenePatch({
       custom_items: 'not an array',
     }),
     /custom_items must be an array/
+  );
+});
+
+test('registerSceneKeyValidator validates validator function input', () => {
+  // Non-function validators rejected
+  assert.throws(
+    () => registerSceneKeyValidator('invalid_1', null as any),
+    /must be a function/
+  );
+
+  assert.throws(
+    () => registerSceneKeyValidator('invalid_2', 'not a function' as any),
+    /must be a function/
+  );
+
+  // Empty or invalid key names rejected
+  assert.throws(
+    () => registerSceneKeyValidator('', () => {}),
+    /non-empty string/
+  );
+
+  assert.throws(
+    () => registerSceneKeyValidator('123invalid', () => {}),
+    /Must match.*a-z_/
+  );
+
+  assert.throws(
+    () => registerSceneKeyValidator('invalid-key', () => {}),
+    /Must match.*a-z_/
   );
 });
 
@@ -194,5 +228,67 @@ test('registerSceneKeyValidator prevents duplicate key registration', () => {
   assert.throws(
     () => registerSceneKeyValidator('test_unique_key', () => {}),
     /already registered/
+  );
+});
+
+test('registerSceneKeyValidator prevents overriding built-in scene keys', () => {
+  // Cannot override built-in keys like 'models', 'layers', 'paths', 'prefabs'
+  assert.throws(
+    () => registerSceneKeyValidator('models', () => {}),
+    /Cannot override built-in/
+  );
+
+  assert.throws(
+    () => registerSceneKeyValidator('layers', () => {}),
+    /Cannot override built-in/
+  );
+
+  assert.throws(
+    () => registerSceneKeyValidator('paths', () => {}),
+    /Cannot override built-in/
+  );
+
+  assert.throws(
+    () => registerSceneKeyValidator('prefabs', () => {}),
+    /Cannot override built-in/
+  );
+});
+
+test('custom validator errors are wrapped with context', () => {
+  registerSceneKeyValidator('error_test', (value: any) => {
+    throw new Error('Custom validation failed for this value');
+  });
+
+  assert.throws(
+    () => validatePluginScenePatch({ error_test: {} }),
+    /Custom validator for 'error_test' failed.*Custom validation failed/
+  );
+});
+
+test('unsupported keys remain explicitly rejected even with custom validators registered', () => {
+  // Register a custom validator
+  registerSceneKeyValidator('custom_key', () => {});
+
+  // Custom key is now supported
+  assert.doesNotThrow(() => validatePluginScenePatch({ custom_key: [] }));
+
+  // But other unsupported keys still fail (strict!)
+  assert.throws(
+    () => validatePluginScenePatch({ unknown_key: {} }),
+    /Unsupported scene.update key: unknown_key/
+  );
+
+  assert.throws(
+    () => validatePluginScenePatch({ environment: {} }),
+    /Unsupported scene.update key: environment/
+  );
+
+  // Multiple keys: all must be supported
+  assert.throws(
+    () => validatePluginScenePatch({
+      custom_key: [],
+      unknown_key: {}, // This one fails, whole patch rejected
+    }),
+    /Unsupported scene.update key: unknown_key/
   );
 });

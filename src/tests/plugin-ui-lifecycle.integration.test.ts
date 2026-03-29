@@ -438,7 +438,185 @@ test('extension render function is callable and returns expected output', async 
   const extensions = pluginManager.getUIExtensions('panel');
   assert.equal(extensions.length, 1);
 
-  // Verify render function is callable
+  // Verify render function is callable and returns correct output
   const rendered = extensions[0].render();
   assert.equal(rendered, expectedOutput);
+});
+
+test('extensions only render when plugin is active (render behavior)', async () => {
+  installMockLocalStorage();
+  pluginManager.initCoreApi({ triggerUIUpdate: () => {} });
+
+  const pluginId = `active-check-${Date.now()}`;
+  const renderCalls: number[] = [];
+
+  pluginManager.register({
+    metadata: {
+      id: pluginId,
+      name: 'Active Check',
+      version: '1.0.0',
+      author: 'test',
+      description: 'test',
+      type: ['ui'],
+      permissions: ['ui:panels'],
+    },
+    activate: (context) => {
+      context.api.ui.registerExtension({
+        id: 'active-panel',
+        type: 'panel',
+        render: () => {
+          renderCalls.push(renderCalls.length);
+          return 'Active Content';
+        },
+      });
+    },
+  });
+
+  // Before activation: no extensions to render
+  assert.equal(pluginManager.getUIExtensions('panel').length, 0);
+
+  // Activate
+  await pluginManager.activate(pluginId);
+  assert.equal(pluginManager.getUIExtensions('panel').length, 1);
+
+  // Simulate UI calling render (as Sidebar.tsx does)
+  const activeExtensions = pluginManager.getUIExtensions('panel');
+  activeExtensions.forEach(ext => ext.render());
+  assert.equal(renderCalls.length, 1);
+
+  // Deactivate
+  await pluginManager.deactivate(pluginId);
+  assert.equal(pluginManager.getUIExtensions('panel').length, 0);
+
+  // After deactivation, extensions should not be in getUIExtensions (wouldn't be rendered)
+  const inactiveExtensions = pluginManager.getUIExtensions('panel');
+  assert.equal(inactiveExtensions.length, 0);
+  inactiveExtensions.forEach(ext => ext.render());
+  assert.equal(renderCalls.length, 1); // Still 1, not called again
+});
+
+test('render function errors do not crash extension lifecycle', async () => {
+  installMockLocalStorage();
+  pluginManager.initCoreApi({ triggerUIUpdate: () => {} });
+
+  const pluginId = `error-render-${Date.now()}`;
+  const errors: Error[] = [];
+
+  pluginManager.register({
+    metadata: {
+      id: pluginId,
+      name: 'Error Render Test',
+      version: '1.0.0',
+      author: 'test',
+      description: 'test',
+      type: ['ui'],
+      permissions: ['ui:panels'],
+    },
+    activate: (context) => {
+      context.api.ui.registerExtension({
+        id: 'error-panel',
+        type: 'panel',
+        render: () => {
+          throw new Error('Render failed');
+        },
+      });
+    },
+  });
+
+  await pluginManager.activate(pluginId);
+  const extensions = pluginManager.getUIExtensions('panel');
+  assert.equal(extensions.length, 1);
+
+  // Calling render throws
+  assert.throws(() => extensions[0].render(), /Render failed/);
+
+  // But extension is still in the registry
+  assert.equal(pluginManager.getUIExtensions('panel').length, 1);
+
+  // Plugin can still be deactivated cleanly
+  await pluginManager.deactivate(pluginId);
+  assert.equal(pluginManager.getUIExtensions('panel').length, 0);
+});
+
+test('permission violations for UI extensions are caught at registration time', async () => {
+  installMockLocalStorage();
+  pluginManager.initCoreApi({ triggerUIUpdate: () => {} });
+
+  const pluginId = `no-perms-${Date.now()}`;
+  let permissionErrorCaught = false;
+
+  pluginManager.register({
+    metadata: {
+      id: pluginId,
+      name: 'No Permissions',
+      version: '1.0.0',
+      author: 'test',
+      description: 'test',
+      type: ['ui'],
+      permissions: [], // No UI permissions!
+    },
+    activate: (context) => {
+      try {
+        // Try to register a panel without permission
+        context.api.ui.registerExtension({
+          id: 'unauthorized-panel',
+          type: 'panel',
+          render: () => 'Should not work',
+        });
+      } catch (error) {
+        permissionErrorCaught = true;
+      }
+    },
+  });
+
+  await pluginManager.activate(pluginId);
+
+  // Permission check should have failed
+  assert.equal(permissionErrorCaught, true);
+
+  // No extensions should be registered
+  assert.equal(pluginManager.getUIExtensions('panel').length, 0);
+});
+
+test('render function can be called multiple times without state pollution', async () => {
+  installMockLocalStorage();
+  pluginManager.initCoreApi({ triggerUIUpdate: () => {} });
+
+  const pluginId = `multi-render-${Date.now()}`;
+  let callCount = 0;
+
+  pluginManager.register({
+    metadata: {
+      id: pluginId,
+      name: 'Multi Render',
+      version: '1.0.0',
+      author: 'test',
+      description: 'test',
+      type: ['ui'],
+      permissions: ['ui:panels'],
+    },
+    activate: (context) => {
+      context.api.ui.registerExtension({
+        id: 'stable-panel',
+        type: 'panel',
+        render: () => {
+          callCount++;
+          return `Rendered ${callCount} times`;
+        },
+      });
+    },
+  });
+
+  await pluginManager.activate(pluginId);
+  const extensions = pluginManager.getUIExtensions('panel');
+
+  // Call render multiple times (simulating re-renders)
+  const output1 = extensions[0].render();
+  const output2 = extensions[0].render();
+  const output3 = extensions[0].render();
+
+  assert.equal(output1, 'Rendered 1 times');
+  assert.equal(output2, 'Rendered 2 times');
+  assert.equal(output3, 'Rendered 3 times');
+  assert.equal(callCount, 3);
 });

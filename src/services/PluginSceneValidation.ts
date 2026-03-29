@@ -14,8 +14,8 @@ const isVec3 = (value: unknown): value is [number, number, number] =>
   value.length === 3 &&
   value.every(n => typeof n === 'number' && Number.isFinite(n));
 
-// Individual scene-key validators
-const sceneKeyValidators = {
+// Built-in validators (immutable at runtime)
+const BUILTIN_SCENE_VALIDATORS = {
   models: (value: any): void => {
     if (!Array.isArray(value)) throw new Error('scene.update models must be an array');
     for (const model of value) {
@@ -78,32 +78,69 @@ const sceneKeyValidators = {
   },
 } as const;
 
-type SupportedSceneKey = keyof typeof sceneKeyValidators;
+type BuiltinSceneKey = keyof typeof BUILTIN_SCENE_VALIDATORS;
 
-const getSupportedSceneKeys = (): SupportedSceneKey[] =>
-  Object.keys(sceneKeyValidators) as SupportedSceneKey[];
+// Custom validators registered at startup (immutable during validation)
+let customSceneValidators: Map<string, (value: any) => void> = new Map();
+let validatorsSealed = false;
+
+/**
+ * Get all supported scene keys (built-in + registered custom).
+ * WARNING: This function determines which keys are valid.
+ * Never call this during validation - use getSupportedSceneKeysAtValidationTime instead.
+ */
+const getAllSupportedKeys = (): (BuiltinSceneKey | string)[] => [
+  ...Object.keys(BUILTIN_SCENE_VALIDATORS) as BuiltinSceneKey[],
+  ...Array.from(customSceneValidators.keys()),
+];
+
+/**
+ * Get supported keys frozen at the moment validation starts.
+ * This prevents race conditions where new validators are registered during validation.
+ */
+const getSupportedSceneKeysAtValidationTime = (): Set<string> => {
+  const keys = [
+    ...Object.keys(BUILTIN_SCENE_VALIDATORS),
+    ...Array.from(customSceneValidators.keys()),
+  ];
+  return new Set(keys);
+};
 
 export const validatePluginScenePatch = (patch: unknown): PluginScenePatch => {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
     throw new Error('updateSceneState updater must return an object');
   }
 
-  const supportedKeys = getSupportedSceneKeys();
-  const supportedKeySet = new Set(supportedKeys);
+  // Snapshot supported keys at validation time (prevents race conditions)
+  const supportedKeysAtValidationTime = getSupportedSceneKeysAtValidationTime();
 
+  // Strict: Reject any unsupported key
   for (const key of Object.keys(patch as Record<string, unknown>)) {
-    if (!supportedKeySet.has(key as SupportedSceneKey)) {
+    if (!supportedKeysAtValidationTime.has(key)) {
       throw new Error(`Unsupported scene.update key: ${key}`);
     }
   }
 
   const next = patch as PluginScenePatch;
 
-  // Apply validators for each provided key
-  for (const key of supportedKeys) {
-    if ((next as any)[key] !== undefined) {
-      const validator = sceneKeyValidators[key];
-      validator((next as any)[key]);
+  // Apply built-in validators for provided keys
+  for (const builtinKey of Object.keys(BUILTIN_SCENE_VALIDATORS) as BuiltinSceneKey[]) {
+    if ((next as any)[builtinKey] !== undefined) {
+      BUILTIN_SCENE_VALIDATORS[builtinKey]((next as any)[builtinKey]);
+    }
+  }
+
+  // Apply custom validators for provided keys
+  for (const [customKey, validator] of customSceneValidators.entries()) {
+    if ((next as any)[customKey] !== undefined) {
+      try {
+        validator((next as any)[customKey]);
+      } catch (error) {
+        if (error instanceof Error) {
+          throw new Error(`Custom validator for '${customKey}' failed: ${error.message}`);
+        }
+        throw error;
+      }
     }
   }
 
@@ -111,18 +148,64 @@ export const validatePluginScenePatch = (patch: unknown): PluginScenePatch => {
 };
 
 /**
- * Register a new scene-key validator for future schema expansion.
- * This enables safe extensibility while maintaining strict validation.
+ * Register a custom scene-key validator for startup schema expansion.
+ * This must be called BEFORE any validation occurs.
+ * Validators are immutable once validation starts.
  *
- * @param key - The scene key to validate (e.g., 'meshes', 'animations')
+ * @param key - The scene key to validate (e.g., 'animations', 'meshes')
  * @param validator - A function that throws if validation fails
+ * @throws If key is already registered or contains invalid characters
+ * @throws If validators have already been sealed (validation started)
  */
 export const registerSceneKeyValidator = (
   key: string,
   validator: (value: any) => void
 ): void => {
-  if ((sceneKeyValidators as any)[key]) {
+  if (validatorsSealed) {
+    throw new Error('Cannot register validators after validation has started');
+  }
+
+  // Validate key format (no empty strings, no reserved names, valid identifier)
+  if (!key || typeof key !== 'string') {
+    throw new Error('Validator key must be a non-empty string');
+  }
+  if (!/^[a-z_][a-z0-9_]*$/.test(key)) {
+    throw new Error(`Invalid validator key '${key}'. Must match /^[a-z_][a-z0-9_]*$/`);
+  }
+
+  // Prevent overwriting built-in validators
+  if (key in BUILTIN_SCENE_VALIDATORS) {
+    throw new Error(`Cannot override built-in scene key: ${key}`);
+  }
+
+  // Validate validator function
+  if (typeof validator !== 'function') {
+    throw new Error(`Validator must be a function, got ${typeof validator}`);
+  }
+
+  // Prevent duplicate registration
+  if (customSceneValidators.has(key)) {
     throw new Error(`Scene key validator already registered: ${key}`);
   }
-  (sceneKeyValidators as any)[key] = validator;
+
+  // Register the validator
+  customSceneValidators.set(key, validator);
+};
+
+/**
+ * Seal validators to prevent registration after validation begins.
+ * Used internally by the validation system.
+ * @internal
+ */
+export const sealSceneValidators = (): void => {
+  validatorsSealed = true;
+};
+
+/**
+ * Reset validator registry (for testing).
+ * @internal
+ */
+export const resetSceneValidators = (): void => {
+  customSceneValidators.clear();
+  validatorsSealed = false;
 };
