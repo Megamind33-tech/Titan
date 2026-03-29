@@ -10,13 +10,10 @@ import VersionHistoryModal from './components/VersionHistoryModal';
 import AssetBrowser from './components/AssetBrowser/AssetBrowser';
 import { GitHubImportModal } from './components/GitHubImportModal';
 import { MenuBar } from './components/MenuBar';
-import { addToImportHistory } from './services/ImportHistoryService';
 import GeminiAssistant from './components/GeminiAssistant';
 import SceneLayerPanel from './components/SceneLayerPanel';
 import PrefabCreationModal from './components/PrefabCreationModal';
 import AssetReplacementModal from './components/AssetReplacementModal';
-import { exportScene } from './utils/exportUtils';
-import { saveSceneVersion, loadSceneVersion, autoSaveScene, loadAutoSave, SceneState } from './utils/storageUtils';
 import { useUndoRedo } from './hooks/useUndoRedo';
 import { useMaterialLibrary } from './hooks/useMaterialLibrary';
 import { useEnvironmentLibrary } from './hooks/useEnvironmentLibrary';
@@ -33,26 +30,23 @@ import { Path } from './types/paths';
 import { AssetMetrics } from './types/performance';
 import { DeviceProfile, QualitySettings } from './types/quality';
 import { DEFAULT_PROFILES } from './constants/qualityProfiles';
-import { pluginManager } from './services/PluginManager';
-import { validatePluginScenePatch } from './services/PluginSceneValidation';
-import { DiagnosticsPlugin } from './plugins/DiagnosticsPlugin';
 import { useAICommandExecutor } from './hooks/useAICommandExecutor';
 import { activateProjectForEditor } from './services/ProjectLoadService';
-import { validateExportFormatForAdapter } from './services/ProjectAdapterRegistry';
 import { ProjectMetadataProbe } from './types/projectAdapter';
 import { ProjectSession } from './types/projectSession';
-import { createProjectSession, loadProjectSession, persistProjectSession } from './services/ProjectSessionService';
+import { createProjectSession, loadProjectSession } from './services/ProjectSessionService';
 import { getProjectSelectionGuidance } from './services/ProjectAdapterRegistry';
 import ProjectOnboardingModal from './components/ProjectOnboardingModal';
-import { getProjectAwareExportConfig } from './services/ProjectExportWorkflow';
 import { generateAuthoredId } from './utils/idUtils';
-import {
-  loadImportedObjects,
-  loadImportedEnvironment,
-  loadImportedPaths,
-  createImportSummary,
-} from './services/ImportedSceneLoader';
-import { LoadedSceneData } from './services/Swim26ManifestLoader';
+import { useProjectSessionBootstrap } from './hooks/useProjectSessionBootstrap';
+import { useProjectSessionPersistence } from './hooks/useProjectSessionPersistence';
+import { useScenePersistenceCoordinator } from './hooks/useScenePersistenceCoordinator';
+import { useProjectAwareExport } from './hooks/useProjectAwareExport';
+import { usePluginBootstrap } from './hooks/usePluginBootstrap';
+import { useGitHubProjectImport } from './hooks/useGitHubProjectImport';
+import { useProjectActivationCoordinator } from './hooks/useProjectActivationCoordinator';
+import { useAssetWorkflow } from './hooks/useAssetWorkflow';
+import { useActiveProjectSummary } from './hooks/useActiveProjectSummary';
 
 export interface ModelData {
   id: string;
@@ -207,6 +201,12 @@ export default function App() {
   const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string | null>(null);
   const [isGitHubImportModalOpen, setIsGitHubImportModalOpen] = useState(false);
   const [pendingImportRepoRef, setPendingImportRepoRef] = useState<string>('');
+
+  const { activateFromMetadata, activateWithSession, updateSessionVersion } = useProjectActivationCoordinator({
+    setProjectMetadata,
+    setActiveProject,
+    setProjectSession,
+  });
 
   const setModels = useCallback((newModels: ModelData[] | ((prev: ModelData[]) => ModelData[]), options?: { transient?: boolean, replace?: boolean }) => {
     setAppState(prev => ({
@@ -538,103 +538,22 @@ export default function App() {
     addAssetRef.current = addAsset;
   }, [assets, addAsset]);
 
-  // Initialize Plugin System with stable API bridge
-  useEffect(() => {
-    pluginManager.initCoreApi({
-      getSceneState: () => sceneStateRef.current,
-      updateSceneState: (updater: (state: any) => any) => {
-        if (typeof updater !== 'function') {
-          throw new Error('updateSceneState requires an updater function');
-        }
-        const currentState = sceneStateRef.current;
-        let newState: any;
-
-        try {
-          // Validate the entire patch before applying any state changes
-          newState = validatePluginScenePatch(updater(currentState));
-        } catch (error) {
-          // Validation failed - NO state changes applied (atomic)
-          throw error;
-        }
-
-        // ATOMIC: Collect all state updates and apply together
-        // This prevents partial state mutations if any setter fails
-        const stateUpdates: { models?: any; layers?: any; paths?: any; prefabs?: any } = {};
-        let hasUpdates = false;
-
-        if (newState?.models !== undefined && newState.models !== currentState.models) {
-          stateUpdates.models = newState.models;
-          hasUpdates = true;
-        }
-        if (newState?.layers !== undefined && newState.layers !== currentState.layers) {
-          stateUpdates.layers = newState.layers;
-          hasUpdates = true;
-        }
-        if (newState?.paths !== undefined && newState.paths !== currentState.paths) {
-          stateUpdates.paths = newState.paths;
-          hasUpdates = true;
-        }
-        if (newState?.prefabs !== undefined && newState.prefabs !== currentState.prefabs) {
-          stateUpdates.prefabs = newState.prefabs;
-          hasUpdates = true;
-        }
-
-        // Apply all collected updates atomically
-        if (hasUpdates) {
-          if (stateUpdates.models !== undefined) {
-            setModels(stateUpdates.models);
-          }
-          if (stateUpdates.layers !== undefined) {
-            setLayers(stateUpdates.layers);
-          }
-          if (stateUpdates.paths !== undefined || stateUpdates.prefabs !== undefined) {
-            setAppState(prev => ({
-              ...prev,
-              ...(stateUpdates.paths !== undefined && { paths: stateUpdates.paths }),
-              ...(stateUpdates.prefabs !== undefined && { prefabs: stateUpdates.prefabs })
-            }));
-          }
-        }
-      },
-      subscribeToScene: (listener: any) => {
-        listener(sceneStateRef.current);
-        sceneSubscribersRef.current.add(listener);
-        return () => {
-          sceneSubscribersRef.current.delete(listener);
-        };
-      },
-      getAssetLibrary: () => assetsRef.current,
-      addAsset: (assetPayload: { file: File; category: any }) => {
-        if (!assetPayload?.file || !assetPayload?.category) {
-          throw new Error('addAsset requires { file, category }');
-        }
-        addAssetRef.current(assetPayload.file, assetPayload.category);
-      },
-      triggerUIUpdate: () => {
-        setPluginUIVersion(v => v + 1);
-      }
-    });
-
-    // Register built-in plugins
-    pluginManager.register(DiagnosticsPlugin);
-  }, [setModels, setLayers, setPrefabs, setAppState]);
-
-  useEffect(() => {
-    const snapshot = {
+  usePluginBootstrap({
+    sceneStateRef,
+    sceneSubscribersRef,
+    assetsRef,
+    addAssetRef,
+    setModels,
+    setLayers,
+    setAppState,
+    triggerUIUpdate: () => setPluginUIVersion(v => v + 1),
+    snapshot: {
       models: appState.models,
       layers: appState.layers,
       paths: appState.paths,
       prefabs: appState.prefabs,
-    };
-    sceneStateRef.current = snapshot;
-    sceneSubscribersRef.current.forEach(listener => {
-      try {
-        listener(snapshot);
-      } catch (error) {
-        console.warn('Plugin scene subscriber failed', error);
-      }
-    });
-  }, [appState.models, appState.layers, appState.paths, appState.prefabs]);
+    },
+  });
 
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
@@ -655,108 +574,39 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [undo, redo]);
 
-  // Load auto-save on mount
-  useEffect(() => {
-    const init = async () => {
-      try {
-        const savedState = await loadAutoSave();
-        const persistedSession = await loadProjectSession();
+  useProjectSessionBootstrap({
+    applyRecoveredSceneState: (savedState) => {
+      setAppState({
+        models: (savedState.models as ModelData[]) || [],
+        prefabs: savedState.prefabs || [],
+        gridReceiveShadow: savedState.sceneSettings?.gridReceiveShadow ?? true,
+        shadowSoftness: savedState.sceneSettings?.shadowSoftness ?? 0.5,
+        environment: savedState.sceneSettings?.environment ?? DEFAULT_ENVIRONMENT,
+        cameraPresets: savedState.cameraSettings?.presets ?? DEFAULT_CAMERA_PRESETS,
+        activeCameraPresetId: savedState.cameraSettings?.activePresetId ?? 'default-orbit',
+        cameraPaths: savedState.cameraSettings?.paths ?? [],
+        activeCameraPathId: savedState.cameraSettings?.activePathId ?? null,
+        layers: savedState.layers ?? DEFAULT_LAYERS,
+        terrain: savedState.terrain ?? { heightMap: Array(64).fill(0).map(() => Array(64).fill(0)), materialMap: Array(64).fill(0).map(() => Array(64).fill('grass')), size: 64, resolution: 64 },
+        paths: savedState.paths ?? [],
+        collisionZones: savedState.collisionZones ?? [],
+        activeProfileId: 'high',
+        customProfile: DEFAULT_PROFILES[2].settings
+      }, { replace: true });
+    },
+    setProjectMetadata,
+    setActiveProject,
+    setProjectSession,
+    setShowOnboarding,
+    setSessionRecoveryMessage,
+    setIsInitialLoad,
+  });
 
-        const urlParams = new URLSearchParams(window.location.search);
-        const guidedProbe: ProjectMetadataProbe = {
-          profileHint: urlParams.get('projectProfile') ?? undefined,
-          runtimeHint: (urlParams.get('runtime') as ProjectMetadataProbe['runtimeHint']) ?? undefined,
-          adapterHint: urlParams.get('adapterId') ?? undefined,
-        };
-
-        const baseMetadata = persistedSession.session?.metadata ?? savedState?.projectMetadata ?? {};
-        const metadataProbe = { ...baseMetadata, ...guidedProbe };
-        const activatedProject = activateProjectForEditor(metadataProbe);
-        setProjectMetadata(metadataProbe);
-        setActiveProject(activatedProject);
-
-        if (persistedSession.session) {
-          setProjectSession({
-            ...persistedSession.session,
-            metadata: metadataProbe,
-            profileId: activatedProject.profile.id,
-            adapterId: activatedProject.adapter.id,
-            bridgeId: activatedProject.bridgeId,
-            runtimeTarget: activatedProject.adapter.runtime,
-            capabilities: activatedProject.activeCapabilities,
-          });
-        } else {
-          setShowOnboarding(true);
-        }
-
-        if (persistedSession.requiresRecovery && persistedSession.recoveryReason) {
-          setSessionRecoveryMessage(`Recovered using safe defaults: ${persistedSession.recoveryReason}`);
-          setShowOnboarding(true);
-        }
-
-        if (savedState) {
-          setAppState({
-            models: (savedState.models as ModelData[]) || [],
-            prefabs: savedState.prefabs || [],
-            gridReceiveShadow: savedState.sceneSettings?.gridReceiveShadow ?? true,
-            shadowSoftness: savedState.sceneSettings?.shadowSoftness ?? 0.5,
-            environment: savedState.sceneSettings?.environment ?? DEFAULT_ENVIRONMENT,
-            cameraPresets: savedState.cameraSettings?.presets ?? DEFAULT_CAMERA_PRESETS,
-            activeCameraPresetId: savedState.cameraSettings?.activePresetId ?? 'default-orbit',
-            cameraPaths: savedState.cameraSettings?.paths ?? [],
-            activeCameraPathId: savedState.cameraSettings?.activePathId ?? null,
-            layers: savedState.layers ?? DEFAULT_LAYERS,
-            terrain: savedState.terrain ?? { heightMap: Array(64).fill(0).map(() => Array(64).fill(0)), materialMap: Array(64).fill(0).map(() => Array(64).fill('grass')), size: 64, resolution: 64 },
-            paths: savedState.paths ?? [],
-            collisionZones: savedState.collisionZones ?? [],
-            activeProfileId: 'high',
-            customProfile: DEFAULT_PROFILES[2].settings
-          }, { replace: true });
-        }
-      } catch (e) {
-        console.error("Failed to load auto-save", e);
-      } finally {
-        setIsInitialLoad(false);
-      }
-    };
-    init();
-  }, []);
-
-  // Auto-save when models or settings change
-  useEffect(() => {
-    if (isInitialLoad) return;
-    
-    const timeoutId = setTimeout(() => {
-      autoSaveScene(
-        models,
-        prefabs,
-        { gridReceiveShadow, shadowSoftness, environment }, 
-        { presets: cameraPresets, activePresetId: activeCameraPresetId, paths: cameraPaths, activePathId: activeCameraPathId },
-        layers,
-        appState.terrain,
-        appState.paths,
-        appState.collisionZones,
-        projectMetadata
-      );
-    }, 2000); // Debounce auto-save by 2 seconds
-
-    return () => clearTimeout(timeoutId);
-  }, [models, prefabs, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, appState.terrain, appState.paths, appState.collisionZones, isInitialLoad, projectMetadata]);
-
-
-  useEffect(() => {
-    if (!projectSession) return;
-    persistProjectSession({
-      ...projectSession,
-      metadata: projectMetadata,
-      profileId: activeProject.profile.id,
-      adapterId: activeProject.adapter.id,
-      bridgeId: activeProject.bridgeId,
-      runtimeTarget: activeProject.adapter.runtime,
-      capabilities: activeProject.activeCapabilities,
-      lastOpenedAt: new Date().toISOString(),
-    });
-  }, [projectSession, projectMetadata, activeProject]);
+  useProjectSessionPersistence({
+    projectSession,
+    projectMetadata,
+    activeProject,
+  });
 
   const handleFocus = useCallback(() => {
     setFocusTrigger(Date.now());
@@ -807,146 +657,20 @@ export default function App() {
     setSelectedModelId(newModel.id);
   }, [setModels]);
 
-  const handlePlaceAsset = useCallback((asset: Asset, position: [number, number, number] = [0, 0, 0]) => {
-    const newModel: ModelData = {
-      id: Date.now().toString() + Math.random().toString(36).substring(7),
-      authoredId: generateAuthoredId(),  // Stable round-trip ID
-      name: asset.metadata.name,
-      url: asset.url,
-      assetId: asset.id,
-      file: asset.file,
-      position,
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      wireframe: false,
-      lightIntensity: asset.metadata.type === 'light' ? 1 : 0,
-      castShadow: true,
-      receiveShadow: true,
-      type: asset.metadata.type === 'model' ? 'model' :
-            asset.metadata.type === 'light' ? 'light' :
-            asset.metadata.type === 'environment' ? 'environment' : 'model',
-      visible: true,
-      locked: false,
-      classification: asset.metadata.classification,
-      behavior: asset.metadata.type === 'environment' ? 'environment' : 'movable',
-      childrenIds: [],
-    };
-    setModels(models => [...models, newModel]);
-    setSelectedModelId(newModel.id);
-    // Don't close browser if we are placing (allows multiple placements)
-    // setIsAssetBrowserOpen(false);
-  }, [setModels]);
-
-  const handleCloneModels = useCallback((
-    sourceModel: ModelData,
-    placements: Array<{ position: [number, number, number]; rotation: [number, number, number] }>
-  ): string[] => {
-    const newIds = placements.map((_, index) => `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`);
-
-    const clones = placements.map((placement, index): ModelData => ({
-      ...sourceModel,
-      id: newIds[index],
-      authoredId: generateAuthoredId(),  // Each clone gets a new authoredId
-      position: placement.position,
-      rotation: placement.rotation,
-      parentId: null,
-      childrenIds: [],
-      prefabInstanceId: undefined,
-      isPrefabRoot: false,
-      overriddenProperties: [],
-      name: `${sourceModel.name} ${index + 1}`
-    }));
-
-    setModels(prev => [...prev, ...clones]);
-    if (newIds.length > 0) {
-      setSelectedModelId(newIds[0]);
-    }
-
-    return newIds;
-  }, [setModels]);
-
-  const handleCreateModelsFromAsset = useCallback((
-    asset: Asset,
-    placements: Array<{ position: [number, number, number]; rotation: [number, number, number] }>
-  ): string[] => {
-    const ids = placements.map((_, index) => `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`);
-    const created: ModelData[] = placements.map((placement, index) => ({
-      id: ids[index],
-      authoredId: generateAuthoredId(),  // Each placement gets a new authoredId
-      name: asset.metadata.name,
-      url: asset.url,
-      assetId: asset.id,
-      file: asset.file,
-      position: placement.position,
-      rotation: placement.rotation,
-      scale: [1, 1, 1],
-      wireframe: false,
-      lightIntensity: asset.metadata.type === 'light' ? 1 : 0,
-      castShadow: true,
-      receiveShadow: true,
-      type: asset.metadata.type === 'model' ? 'model' :
-            asset.metadata.type === 'light' ? 'light' :
-            asset.metadata.type === 'environment' ? 'environment' : 'model',
-      visible: true,
-      locked: false,
-      classification: asset.metadata.classification,
-      behavior: asset.metadata.type === 'environment' ? 'environment' : 'movable',
-      childrenIds: [],
-    }));
-
-    setModels(prev => [...prev, ...created]);
-    if (ids.length > 0) setSelectedModelId(ids[0]);
-    return ids;
-  }, [setModels]);
-
-  const handleReplaceAsset = useCallback((asset: Asset) => {
-    if (!selectedModelId) return;
-    setReplacementAsset(asset);
-    setIsReplacementModalOpen(true);
-    setIsAssetBrowserOpen(false);
-  }, [selectedModelId]);
-
-  const handleConfirmReplacement = useCallback((
-    newAsset: Asset, 
-    scaleMultiplier: [number, number, number], 
-    positionOffset: [number, number, number],
-    materialRemap: { [oldMat: string]: string }
-  ) => {
-    if (!selectedModelId) return;
-    
-    setModels(models => models.map(m => {
-      if (m.id === selectedModelId) {
-        return {
-          ...m,
-          name: newAsset.metadata.name,
-          url: newAsset.url,
-          assetId: newAsset.id,
-          file: newAsset.file,
-          type: newAsset.metadata.type === 'model' ? 'model' : 
-                newAsset.metadata.type === 'light' ? 'light' : 
-                newAsset.metadata.type === 'environment' ? 'environment' : 'model',
-          classification: newAsset.metadata.classification,
-          // Apply AI-suggested offsets
-          scale: [
-            m.scale[0] * scaleMultiplier[0],
-            m.scale[1] * scaleMultiplier[1],
-            m.scale[2] * scaleMultiplier[2]
-          ],
-          position: [
-            m.position[0] + positionOffset[0],
-            m.position[1] + positionOffset[1],
-            m.position[2] + positionOffset[2]
-          ],
-          // Store material remap info for the renderer to use
-          materialRemap: materialRemap
-        };
-      }
-      return m;
-    }));
-    
-    setIsReplacementModalOpen(false);
-    setReplacementAsset(null);
-  }, [selectedModelId, setModels]);
+  const {
+    handlePlaceAsset,
+    handleCloneModels,
+    handleCreateModelsFromAsset,
+    handleReplaceAsset,
+    handleConfirmReplacement,
+  } = useAssetWorkflow({
+    setModels,
+    setSelectedModelId,
+    selectedModelId,
+    setReplacementAsset,
+    setIsReplacementModalOpen,
+    setIsAssetBrowserOpen,
+  });
 
   const handleScaleChange = useCallback((id: string, scale: number) => {
     setModels(models => models.map(m => m.id === id ? { ...m, scale: [scale, scale, scale] } : m));
@@ -1110,59 +834,47 @@ export default function App() {
     setSelectedModelId(null);
   }, []);
 
-  const exportConfig = getProjectAwareExportConfig(activeProject);
+  const { exportConfig, handleExport } = useProjectAwareExport({
+    activeProject,
+    models,
+    sceneSettings: { gridReceiveShadow, shadowSoftness, environment },
+    threeScene,
+    cameraSettings: { presets: cameraPresets, activePresetId: activeCameraPresetId, paths: cameraPaths, activePathId: activeCameraPathId },
+    layers,
+  });
 
-  const handleExport = useCallback((selectedIds: string[], options: ExportOptions) => {
-    validateExportFormatForAdapter(activeProject.adapter.id, options.format);
-    exportScene(models, { gridReceiveShadow, shadowSoftness, environment }, threeScene, { selectedIds, ...options, cameraSettings: { presets: cameraPresets, activePresetId: activeCameraPresetId, paths: cameraPaths, activePathId: activeCameraPathId }, layers });
-  }, [models, gridReceiveShadow, shadowSoftness, environment, threeScene, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, activeProject.adapter.id]);
-
-  const handleSaveVersion = useCallback(async (note: string) => {
-    await saveSceneVersion(
+  const { saveVersion: handleSaveVersion, loadVersion: handleLoadVersion } = useScenePersistenceCoordinator({
+    sceneState: {
       models,
       prefabs,
-      { gridReceiveShadow, shadowSoftness, environment },
-      note,
-      { presets: cameraPresets, activePresetId: activeCameraPresetId, paths: cameraPaths, activePathId: activeCameraPathId },
+      gridReceiveShadow,
+      shadowSoftness,
+      environment,
+      cameraPresets,
+      activeCameraPresetId,
+      cameraPaths,
+      activeCameraPathId,
       layers,
-      appState.terrain,
-      appState.paths,
-      appState.collisionZones,
-      projectMetadata
-    );
-  }, [models, prefabs, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, appState.terrain, appState.paths, appState.collisionZones, projectMetadata]);
-
-  const handleLoadVersion = useCallback(async (versionId: string) => {
-    const state = await loadSceneVersion(versionId) as SceneState | null;
-    if (state) {
-      const metadataProbe = state.projectMetadata ?? {};
-      const activatedProject = activateProjectForEditor(metadataProbe);
-      setProjectMetadata(metadataProbe);
-      setActiveProject(activatedProject);
-      setProjectSession(prev => prev ? { ...prev, sceneVersionId: state.versionId } : prev);
-
+      terrain: appState.terrain,
+      paths: appState.paths,
+      collisionZones: appState.collisionZones,
+    },
+    projectMetadata,
+    isInitialLoad,
+    applyLoadedState: (nextState) => {
       setAppState({
-        models: (state.models as ModelData[]) || [],
-        prefabs: state.prefabs || [],
-        gridReceiveShadow: state.sceneSettings?.gridReceiveShadow ?? true,
-        shadowSoftness: state.sceneSettings?.shadowSoftness ?? 0.5,
-        environment: state.sceneSettings?.environment ?? DEFAULT_ENVIRONMENT,
-        cameraPresets: state.cameraSettings?.presets ?? DEFAULT_CAMERA_PRESETS,
-        activeCameraPresetId: state.cameraSettings?.activePresetId ?? 'default-orbit',
-        cameraPaths: state.cameraSettings?.paths ?? [],
-        activeCameraPathId: state.cameraSettings?.activePathId ?? null,
-        layers: state.layers ?? DEFAULT_LAYERS,
-        terrain: state.terrain ?? { heightMap: Array(64).fill(0).map(() => Array(64).fill(0)), materialMap: Array(64).fill(0).map(() => Array(64).fill('grass')), size: 64, resolution: 64 },
-        paths: state.paths ?? [],
-        collisionZones: state.collisionZones ?? [],
+        ...nextState,
         activeProfileId: 'high',
-        customProfile: DEFAULT_PROFILES[2].settings
+        customProfile: DEFAULT_PROFILES[2].settings,
       });
-      setSelectedModelId(null);
-    } else {
-      alert("Failed to load version. It may be corrupted or missing.");
-    }
-  }, [setAppState]);
+    },
+    onVersionMetadata: (metadataProbe, versionId) => {
+      activateFromMetadata(metadataProbe);
+      updateSessionVersion(versionId);
+    },
+    clearSelectionAfterLoad: () => setSelectedModelId(null),
+    defaultCameraPresets: DEFAULT_CAMERA_PRESETS,
+  });
 
   const handleExecuteAICommand = useAICommandExecutor({
     context: {
@@ -1212,100 +924,39 @@ export default function App() {
       ...projectMetadata,
       profileHint: payload.profileHint ?? projectMetadata.profileHint,
     };
-    const activation = activateProjectForEditor(nextMetadata);
     const session = createProjectSession({
       projectName: payload.projectName,
       metadata: nextMetadata,
     });
 
-    setProjectMetadata(nextMetadata);
-    setActiveProject(activation);
-    setProjectSession(session);
+    activateWithSession(session, nextMetadata);
     setShowOnboarding(false);
-  }, [projectMetadata]);
+  }, [activateWithSession, projectMetadata]);
 
   const handleOpenLastProjectSession = useCallback(async () => {
     const recovered = await loadProjectSession();
     if (recovered.session) {
-      const activation = activateProjectForEditor(recovered.session.metadata);
-      setProjectSession(recovered.session);
-      setProjectMetadata(recovered.session.metadata);
-      setActiveProject(activation);
+      activateWithSession(recovered.session);
       setShowOnboarding(false);
       if (recovered.requiresRecovery && recovered.recoveryReason) {
         console.warn('[ProjectSessionRecovery]', recovered.recoveryReason);
         setSessionRecoveryMessage('Your previous project session could not be restored.');
       }
     }
-  }, []);
+  }, [activateWithSession]);
 
-  const handleGitHubImportComplete = useCallback((importedSession: ProjectSession, sceneData?: LoadedSceneData) => {
-    try {
-      // Track import history
-      const rootPath = importedSession.metadata.rootPath || 'unknown';
-      if (rootPath.startsWith('github:')) {
-        const repoPath = rootPath.replace('github:', '').split('#')[0];
-        const [owner, repo] = repoPath.split('/');
-        if (owner && repo) {
-          addToImportHistory(owner, repo, importedSession.projectName);
-        }
-      }
-
-      // Activate the project with the imported session's metadata
-      const activation = activateProjectForEditor(importedSession.metadata);
-
-      // Set the session and metadata
-      setProjectSession(importedSession);
-      setProjectMetadata(importedSession.metadata);
-      setActiveProject(activation);
-      setShowOnboarding(false);
-
-      // Load imported scene data if available
-      if (sceneData) {
-        try {
-          // Precompute all scene updates so we apply state consistently.
-          const importedObjects = loadImportedObjects(sceneData);
-          const importedEnvironment = loadImportedEnvironment(sceneData, environment);
-          const importedPaths = loadImportedPaths(sceneData);
-
-          // Apply scene updates only after all parsing succeeds
-          setModels(importedObjects);
-          setEnvironment(importedEnvironment);
-          setCameraPaths(importedPaths);
-
-          // Create and log summary
-          const summary = createImportSummary(sceneData, importedSession.metadata.rootPath || 'unknown');
-          console.log('[GitHub Import] Scene data loaded:', {
-            projectName: summary.projectName,
-            objects: summary.objectCount,
-            assets: summary.assetCount,
-            paths: summary.pathCount,
-            warnings: summary.warnings,
-          });
-
-          if (summary.warnings.length > 0) {
-            console.warn('[GitHub Import] Warnings:', summary.warnings);
-          }
-        } catch (sceneError) {
-          console.warn('[GitHub Import] Could not load scene data:', sceneError);
-          // Continue anyway - session is valid even if scene data isn't
-        }
-      }
-
-      // Persist the session
-      persistProjectSession(importedSession);
-
-      // Close the modal
-      setIsGitHubImportModalOpen(false);
-
-      console.log(`[GitHub Import] Successfully imported project: ${importedSession.projectName} from ${importedSession.metadata.rootPath}`);
-    } catch (error) {
-      console.error('[GitHub Import] Error handling import completion:', error);
-      // Keep modal open so user can see error or retry
-    }
-  }, [environment, setModels, setEnvironment, setCameraPaths]);
+  const handleGitHubImportComplete = useGitHubProjectImport({
+    environment,
+    onActivateSession: (session) => activateWithSession(session),
+    setShowOnboarding,
+    setModels,
+    setEnvironment,
+    setCameraPaths,
+    closeModal: () => setIsGitHubImportModalOpen(false),
+  });
 
   const selectedModel = models.find(m => m.id === selectedModelId);
+  const activeProjectSummary = useActiveProjectSummary(activeProject);
 
   return (
           <div className="w-full h-screen flex flex-col relative overflow-hidden bg-bg-dark font-sans selection:bg-blue-500/30">
@@ -1336,7 +987,7 @@ export default function App() {
               
               {uiVisible && (
                 <>
-                  {(activeProject.activeCapabilities.materialAuthoring ?? true) && <button
+                  {activeProjectSummary.canAuthorMaterials && <button
                     onClick={() => {
                       setAssetBrowserMode('place');
                       setIsAssetBrowserOpen(true);
@@ -1348,11 +999,11 @@ export default function App() {
                   </button>}
                   <div className="bg-[#151619]/90 backdrop-blur-md px-3 py-2 border border-white/10 rounded" data-testid="active-project-summary">
                     <div className="text-[9px] uppercase font-mono tracking-widest text-white/50">ACTIVE PROJECT</div>
-                    <div className="text-[10px] font-mono text-white/80">{activeProject.profile.displayName}</div>
-                    <div className="text-[9px] font-mono text-white/40">RUNTIME TARGET: {activeProject.profile.runtimeTarget.toUpperCase()}</div>
-                    <div className="text-[9px] font-mono text-white/35">ADAPTER: {activeProject.adapter.displayName}</div>
-                    <div className="text-[9px] font-mono text-white/35">RUNTIME BRIDGE: {activeProject.bridgeId}</div>
-                    <div className="text-[9px] font-mono text-white/30">ACTIVATION: {activeProject.detection.mode.toUpperCase()}</div>
+                    <div className="text-[10px] font-mono text-white/80">{activeProjectSummary.profileName}</div>
+                    <div className="text-[9px] font-mono text-white/40">RUNTIME TARGET: {activeProjectSummary.runtimeTargetLabel}</div>
+                    <div className="text-[9px] font-mono text-white/35">ADAPTER: {activeProjectSummary.adapterName}</div>
+                    <div className="text-[9px] font-mono text-white/35">RUNTIME BRIDGE: {activeProjectSummary.bridgeId}</div>
+                    <div className="text-[9px] font-mono text-white/30">ACTIVATION: {activeProjectSummary.activationMode}</div>
                   </div>
                   <div className="flex bg-[#151619]/90 backdrop-blur-md p-1 gap-1 border border-white/10 rounded">
                     <button
@@ -1552,6 +1203,10 @@ export default function App() {
               guidance={getProjectSelectionGuidance(projectMetadata)}
               onCreateProject={handleCreateProjectSession}
               onOpenExisting={handleOpenLastProjectSession}
+              onImportFromGitHub={() => {
+                setShowOnboarding(false);
+                setIsGitHubImportModalOpen(true);
+              }}
             />
 
       <GitHubImportModal

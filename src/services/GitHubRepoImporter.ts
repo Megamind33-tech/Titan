@@ -14,8 +14,7 @@ import { ProjectMetadataProbe, ProjectSelectionResult } from '../types/projectAd
 import {
   GitHubRepoReference,
   GitHubRepoIngestResult,
-  GitHubConnectorError,
-  GitHubConnectorErrorType,
+  DEFAULT_SUPPORTED_IMPORT_FILES,
 } from '../types/gitHubConnector';
 import {
   GitHubConnector,
@@ -74,6 +73,7 @@ export interface ImportResult {
  */
 export class GitHubRepoImporter {
   private connector: GitHubConnector;
+  private readonly supportedImportFiles: string[] = [...DEFAULT_SUPPORTED_IMPORT_FILES];
 
   constructor(connector?: GitHubConnector) {
     this.connector = connector || new GitHubConnector({ accessMode: 'public-only' });
@@ -108,11 +108,11 @@ export class GitHubRepoImporter {
       };
     }
 
-    if (reference.subpath) {
+    if (reference.subpath && (reference.subpath.includes('..') || reference.subpath.startsWith('/'))) {
       return {
         valid: false,
         reference: null,
-        errors: ['Repository subpath imports are not supported yet. Use owner/repo root.'],
+        errors: ['Folder path is invalid. Use a relative path inside the repository.'],
       };
     }
 
@@ -152,7 +152,7 @@ export class GitHubRepoImporter {
       const activeConnector = authToken
         ? new GitHubConnector({ accessMode: 'authenticated', authToken })
         : this.connector;
-      const ingestResult = await activeConnector.ingestRepository(validation.reference!);
+      const ingestResult = await activeConnector.ingestRepository(validation.reference!, this.supportedImportFiles);
 
       if (!ingestResult.success) {
         result.errors.push(
@@ -215,7 +215,7 @@ export class GitHubRepoImporter {
       const activeConnector = authToken
         ? new GitHubConnector({ accessMode: 'authenticated', authToken })
         : this.connector;
-      const ingestResult = await activeConnector.ingestRepository(validation.reference!);
+      const ingestResult = await activeConnector.ingestRepository(validation.reference!, this.supportedImportFiles);
 
       if (!ingestResult.success) {
         result.errors.push(

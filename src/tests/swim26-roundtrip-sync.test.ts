@@ -219,6 +219,34 @@ test('diagnostic reporting captures all changes', () => {
   assert.ok(result.changes.some(c => c.type === 'updated'));
   assert.ok(result.changes.some(c => c.type === 'created'));
   assert.ok(result.diagnostics.length > 0);
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_SUMMARY'));
+});
+
+test('duplicate incoming authoredId entries are skipped and reported', () => {
+  const scene = createMockScene([]);
+  const duplicateA = createMockNode('uuid-dup', 'A');
+  const duplicateB = createMockNode('uuid-dup', 'B', [5, 0, 0]);
+
+  const result = applySwim26RoundTripSync(scene, [duplicateA, duplicateB]);
+
+  assert.equal(result.conflictCount, 1);
+  assert.ok(result.changes.some(c => c.type === 'skipped' && c.authoredId === 'uuid-dup'));
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_DUPLICATE_AUTHORED_ID'));
+
+  const synchronized = synchronizeSwim26ImportedScene(scene, [duplicateA, duplicateB]);
+  assert.equal(synchronized.nodesToCreate.length, 1, 'duplicate authored IDs should not create duplicate meshes');
+});
+
+test('unchanged nodes are skipped instead of counted as updates', () => {
+  const mesh = createMockMesh('uuid-static', 'Static', [1, 2, 3]);
+  const scene = createMockScene([mesh]);
+  const node = createMockNode('uuid-static', 'Static', [1, 2, 3]);
+
+  const result = applySwim26RoundTripSync(scene, [node]);
+
+  assert.equal(result.updatedMeshCount, 0);
+  assert.equal(result.skippedMeshCount, 1);
+  assert.ok(result.changes.some(c => c.type === 'skipped'));
 });
 
 test('multiple iterations without duplication (round-trip stress test)', () => {
@@ -249,4 +277,14 @@ test('multiple iterations without duplication (round-trip stress test)', () => {
 
   // Final check: should have only 2 meshes, not accumulating duplicates
   assert.equal(scene.meshes!.length, 2);
+});
+
+test('reports hierarchy drift when parent authoredId is missing', () => {
+  const scene = createMockScene([]);
+  const childNode = createMockNode('uuid-child', 'Child');
+  childNode.metadata = { parentAuthoredId: 'uuid-missing-parent' };
+
+  const result = applySwim26RoundTripSync(scene, [childNode]);
+
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_PARENT_DRIFT'));
 });

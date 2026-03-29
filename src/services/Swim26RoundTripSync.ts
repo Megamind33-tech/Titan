@@ -25,6 +25,15 @@ export interface SyncChange {
   details: string;
 }
 
+export const SWIM26_INCREMENTAL_UPDATE_POLICY = {
+  identityKey: 'authoredId',
+  add: 'Create mesh when authoredId not found in authored subset index.',
+  update: 'Update transform/material/asset/tags/metadata for matching authoredId.',
+  remove: 'Deactivate stale authored meshes (do not delete) to protect runtime recovery paths.',
+  duplicateIncoming: 'Skip later duplicate incoming authoredId entries and emit warnings.',
+  runtimeOwnedBoundary: 'Never mutate meshes without metadata.authoredId.',
+} as const;
+
 /**
  * Result of a round-trip synchronization operation
  */
@@ -34,9 +43,13 @@ export interface Swim26RoundTripSyncResult {
   addedMeshes: BabylonLikeMesh[];
   updatedMeshCount: number;
   deactivatedMeshCount: number;
+  skippedMeshCount: number;
+  conflictCount: number;
   diagnostics: {
     severity: 'info' | 'warning' | 'error';
+    code: string;
     message: string;
+    authoredId?: string;
   }[];
 }
 
@@ -63,6 +76,9 @@ export const buildAuthoredSubsetIndex = (scene: BabylonLikeScene): AuthoredSubse
   for (const mesh of meshes) {
     const authoredId = mesh.metadata?.authoredId;
     if (typeof authoredId === 'string') {
+      if (authoredIdToMesh.has(authoredId)) {
+        continue;
+      }
       authoredIdToMesh.set(authoredId, mesh);
     }
   }
@@ -82,14 +98,25 @@ const applyNodeUpdate = (
   mesh: BabylonLikeMesh,
   node: ImportedSwim26Node,
   diagnostics: SyncChange[]
-): void => {
+): boolean => {
   const updates: string[] = [];
+  const existingTransform = mesh.position && mesh.rotation && mesh.scaling
+    ? {
+        position: [mesh.position.x, mesh.position.y, mesh.position.z],
+        rotation: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
+        scale: [mesh.scaling.x, mesh.scaling.y, mesh.scaling.z],
+      }
+    : null;
+  const transformChanged = !existingTransform ||
+    existingTransform.position.some((v, i) => v !== node.transform.position[i]) ||
+    existingTransform.rotation.some((v, i) => v !== node.transform.rotation[i]) ||
+    existingTransform.scale.some((v, i) => v !== node.transform.scale[i]);
 
   // Update transform unconditionally (visual state, authored content)
   mesh.position = { x: node.transform.position[0], y: node.transform.position[1], z: node.transform.position[2] };
   mesh.rotation = { x: node.transform.rotation[0], y: node.transform.rotation[1], z: node.transform.rotation[2] };
   mesh.scaling = { x: node.transform.scale[0], y: node.transform.scale[1], z: node.transform.scale[2] };
-  updates.push('transform');
+  if (transformChanged) updates.push('transform');
 
   // Update material hints if provided
   if (node.material) {
@@ -119,7 +146,11 @@ const applyNodeUpdate = (
 
   // Update tags and authored metadata
   if (node.tags.length > 0 || Object.keys(node.metadata).length > 0) {
-    updates.push('tags/metadata');
+    const oldTags = mesh.metadata?.authoredTags;
+    const oldMetadata = mesh.metadata?.authoredMetadata;
+    const tagsChanged = JSON.stringify(oldTags ?? []) !== JSON.stringify(node.tags ?? []);
+    const metadataChanged = JSON.stringify(oldMetadata ?? {}) !== JSON.stringify(node.metadata ?? {});
+    if (tagsChanged || metadataChanged) updates.push('tags/metadata');
   }
 
   // Preserve runtime-injected metadata, only store authored data in explicit field
@@ -143,7 +174,9 @@ const applyNodeUpdate = (
       nodeName: node.name,
       details: `Updated fields: ${updates.join(', ')}`,
     });
+    return true;
   }
+  return false;
 };
 
 /**
@@ -160,6 +193,7 @@ const deactivateNode = (
   const authoredId = mesh.metadata?.authoredId ?? 'unknown';
   const authoredName = mesh.metadata?.authoredName ?? mesh.name ?? 'unnamed';
 
+  if (mesh.metadata?.isDeactivated === true) return;
   mesh.isEnabled = false;
   mesh.visibility = 0;
   mesh.metadata = {
@@ -198,6 +232,9 @@ export const applySwim26RoundTripSync = (
   const addedMeshes: BabylonLikeMesh[] = [];
   let updatedMeshCount = 0;
   let deactivatedMeshCount = 0;
+  let skippedMeshCount = 0;
+  let conflictCount = 0;
+  let hierarchyDriftCount = 0;
 
   // Build index of currently-authored nodes
   const index = buildAuthoredSubsetIndex(scene);
@@ -206,13 +243,37 @@ export const applySwim26RoundTripSync = (
   const newAuthoredIds = new Set(newNodes.map(n => n.id));
 
   // Process new nodes: identify which are new vs. existing
+  const incomingSeen = new Set<string>();
   const nodesToCreate: ImportedSwim26Node[] = [];
   for (const newNode of newNodes) {
+    if (incomingSeen.has(newNode.id)) {
+      conflictCount++;
+      skippedMeshCount++;
+      changes.push({
+        type: 'skipped',
+        authoredId: newNode.id,
+        nodeName: newNode.name,
+        details: 'Duplicate authoredId in incoming manifest entry (skipped).',
+      });
+      continue;
+    }
+    incomingSeen.add(newNode.id);
+
     const existing = index.authoredIdToMesh.get(newNode.id);
     if (existing) {
       // Node exists: apply updates in-place
-      applyNodeUpdate(existing, newNode, changes);
-      updatedMeshCount++;
+      const didUpdate = applyNodeUpdate(existing, newNode, changes);
+      if (didUpdate) {
+        updatedMeshCount++;
+      } else {
+        skippedMeshCount++;
+        changes.push({
+          type: 'skipped',
+          authoredId: newNode.id,
+          nodeName: newNode.name,
+          details: 'No authored changes detected.',
+        });
+      }
     } else {
       // Node is new: will be created by caller
       nodesToCreate.push(newNode);
@@ -222,6 +283,15 @@ export const applySwim26RoundTripSync = (
         nodeName: newNode.name,
         details: `New authored node`,
       });
+    }
+  }
+
+  // Detect hierarchy drift (parent reference missing) in incoming authored subset.
+  for (const node of newNodes) {
+    const metadata = node.metadata as Record<string, unknown> | undefined;
+    const parentAuthoredId = typeof metadata?.parentAuthoredId === 'string' ? metadata.parentAuthoredId : null;
+    if (parentAuthoredId && !incomingSeen.has(parentAuthoredId) && !index.authoredIdToMesh.has(parentAuthoredId)) {
+      hierarchyDriftCount++;
     }
   }
 
@@ -235,8 +305,15 @@ export const applySwim26RoundTripSync = (
 
   // Prepare diagnostics
   const syncDiagnostics = [
-    { severity: 'info' as const, message: `Synchronization complete: ${changes.length} total changes` },
-    { severity: 'info' as const, message: `Updated ${updatedMeshCount} nodes, created ${nodesToCreate.length} nodes, deactivated ${deactivatedMeshCount} stale nodes` },
+    { severity: 'info' as const, code: 'SYNC_SUMMARY', message: `Synchronization complete: ${changes.length} total changes` },
+    { severity: 'info' as const, code: 'SYNC_POLICY', message: `Policy identity key: ${SWIM26_INCREMENTAL_UPDATE_POLICY.identityKey}` },
+    { severity: 'info' as const, code: 'SYNC_COUNTS', message: `Updated ${updatedMeshCount}, created ${nodesToCreate.length}, deactivated ${deactivatedMeshCount}, skipped ${skippedMeshCount}` },
+    ...(conflictCount > 0
+      ? [{ severity: 'warning' as const, code: 'SYNC_DUPLICATE_AUTHORED_ID', message: `${conflictCount} duplicate authoredId entries were skipped.` }]
+      : []),
+    ...(hierarchyDriftCount > 0
+      ? [{ severity: 'warning' as const, code: 'SYNC_PARENT_DRIFT', message: `${hierarchyDriftCount} nodes reference missing parent authoredId.` }]
+      : []),
   ];
 
   return {
@@ -245,6 +322,8 @@ export const applySwim26RoundTripSync = (
     addedMeshes,
     updatedMeshCount,
     deactivatedMeshCount,
+    skippedMeshCount,
+    conflictCount,
     diagnostics: syncDiagnostics,
   };
 };
@@ -275,10 +354,16 @@ export const synchronizeSwim26ImportedScene = (
 } => {
   const result = applySwim26RoundTripSync(scene, newNodes);
 
-  // Extract nodes to create from the changes list
-  const nodesToCreate = newNodes.filter(
-    node => !scene.meshes?.some(m => m.metadata?.authoredId === node.id)
-  );
+  const nodesToCreate: ImportedSwim26Node[] = [];
+  const seenCreated = new Set<string>();
+  for (const change of result.changes) {
+    if (change.type !== 'created') continue;
+    if (seenCreated.has(change.authoredId)) continue;
+    const node = newNodes.find(candidate => candidate.id === change.authoredId);
+    if (!node) continue;
+    nodesToCreate.push(node);
+    seenCreated.add(change.authoredId);
+  }
 
   return { result, nodesToCreate };
 };

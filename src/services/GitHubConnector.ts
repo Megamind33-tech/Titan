@@ -21,7 +21,7 @@ import {
   GitHubFileListResult,
   GitHubFileFetchResult,
   GitHubRepoIngestResult,
-  SUPPORTED_MANIFEST_FILES,
+  DEFAULT_SUPPORTED_IMPORT_FILES,
   BLOCKED_FILE_PATTERNS,
 } from '../types/gitHubConnector';
 
@@ -30,12 +30,17 @@ import {
  */
 export const parseGitHubReference = (input: string): GitHubRepoReference | null => {
   const trimmed = input.trim();
+  const isValidOwner = (owner: string): boolean => /^[a-zA-Z0-9_-]+$/.test(owner);
+  const isValidRepo = (repo: string): boolean => /^[a-zA-Z0-9_.-]+$/.test(repo);
 
   // Try to parse as URL: https://github.com/owner/repo[/tree/branch][/subpath]
   const urlRegex = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)(?:\/tree\/([^\/]+))?(?:\/(.+))?$/;
   const urlMatch = trimmed.match(urlRegex);
   if (urlMatch) {
     const [, owner, repo, branch, subpath] = urlMatch;
+    if (!isValidOwner(owner) || !isValidRepo(repo)) {
+      return null;
+    }
     return {
       url: `https://github.com/${owner}/${repo}`,
       owner,
@@ -50,6 +55,9 @@ export const parseGitHubReference = (input: string): GitHubRepoReference | null 
   const shortMatch = trimmed.match(shortRegex);
   if (shortMatch) {
     const [, owner, repo] = shortMatch;
+    if (!isValidOwner(owner) || !isValidRepo(repo)) {
+      return null;
+    }
     return {
       url: `https://github.com/${owner}/${repo}`,
       owner,
@@ -67,6 +75,10 @@ const validateRepoReference = (ref: GitHubRepoReference): boolean => {
   if (!ref.owner || !ref.repo) return false;
   if (!/^[a-zA-Z0-9_-]+$/.test(ref.owner)) return false;
   if (!/^[a-zA-Z0-9_.-]+$/.test(ref.repo)) return false;
+  if (ref.subpath) {
+    if (ref.subpath.includes('..')) return false;
+    if (ref.subpath.startsWith('/')) return false;
+  }
   return true;
 };
 
@@ -293,7 +305,8 @@ export class GitHubConnector {
       }
 
       const branch = ref.branch || 'main';
-      const url = `${this.RAW_CONTENT_BASE}/${ref.owner}/${ref.repo}/${branch}/${filePath}`;
+      const scopedPath = ref.subpath ? `${ref.subpath.replace(/^\/+|\/+$/g, '')}/${filePath}` : filePath;
+      const url = `${this.RAW_CONTENT_BASE}/${ref.owner}/${ref.repo}/${branch}/${scopedPath}`;
 
       const response = await this.fetchWithTimeout(url);
 
@@ -333,12 +346,12 @@ export class GitHubConnector {
       const content = await response.text();
 
       return {
-        success: true,
-        content: {
-          path: filePath,
-          name: filePath.split('/').pop() || '',
-          content,
-          encoding: 'utf-8',
+          success: true,
+          content: {
+            path: scopedPath,
+            name: filePath.split('/').pop() || '',
+            content,
+            encoding: 'utf-8',
           size: content.length,
         },
       };
@@ -358,7 +371,10 @@ export class GitHubConnector {
    * Ingest a repository: fetch supported manifest files
    * This is the main entry point for importing a GitHub repo
    */
-  async ingestRepository(ref: GitHubRepoReference): Promise<GitHubRepoIngestResult> {
+  async ingestRepository(
+    ref: GitHubRepoReference,
+    supportedFiles: string[] = DEFAULT_SUPPORTED_IMPORT_FILES
+  ): Promise<GitHubRepoIngestResult> {
     const result: GitHubRepoIngestResult = {
       success: false,
       branch: ref.branch || 'main',
@@ -377,11 +393,21 @@ export class GitHubConnector {
 
       result.metadata = metaResult.metadata;
       result.branch = metaResult.branch || result.branch;
+      const effectiveRef: GitHubRepoReference = { ...ref, branch: result.branch };
+
+      // Optional discovery pass for user-facing warnings about ignored code/runtime files.
+      const discoveryResult = await this.listFiles(effectiveRef, ref.subpath || '');
+      if (discoveryResult.success && discoveryResult.files) {
+        const blockedCount = discoveryResult.files.filter(file => isBlockedFile(file.path)).length;
+        if (blockedCount > 0) {
+          result.warnings.push(`Ignored ${blockedCount} unsupported source/config files in repository scope.`);
+        }
+      }
 
       // Try to fetch each supported manifest file
       // Don't fail if some are missing - they're optional
-      for (const fileName of SUPPORTED_MANIFEST_FILES) {
-        const fileResult = await this.fetchFile(ref, fileName);
+      for (const fileName of supportedFiles) {
+        const fileResult = await this.fetchFile(effectiveRef, fileName);
 
         if (fileResult.success && fileResult.content) {
           result.files.set(fileName, fileResult.content);
@@ -403,7 +429,7 @@ export class GitHubConnector {
           new GitHubConnectorError(
             GitHubConnectorErrorType.FILE_NOT_FOUND,
             'No supported import files found in repository (expected manifest/config/package metadata).',
-            { supportedFiles: SUPPORTED_MANIFEST_FILES }
+            { supportedFiles }
           )
         );
       }

@@ -101,10 +101,17 @@ describe('GitHub Import - Input Validation', () => {
     assert.strictEqual(result.valid, true);
   });
 
-  it('rejects subpath references (not supported yet)', () => {
+  it('accepts subpath references for scoped imports', () => {
     const result = importer.validateRepoInput('https://github.com/owner/repo/tree/main/scenes/demo');
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.reference?.branch, 'main');
+    assert.strictEqual(result.reference?.subpath, 'scenes/demo');
+  });
+
+  it('rejects unsafe subpath traversal', () => {
+    const result = importer.validateRepoInput('https://github.com/owner/repo/tree/main/../../secrets');
     assert.strictEqual(result.valid, false);
-    assert.ok(result.errors[0].includes('subpath'));
+    assert.ok(result.errors[0].includes('Folder path'));
   });
 });
 
