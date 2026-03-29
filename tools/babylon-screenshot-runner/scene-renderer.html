@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SWIM26 Babylon Screenshot Renderer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; }
+    #renderCanvas { display: block; }
+  </style>
+</head>
+<body>
+<canvas id="renderCanvas"></canvas>
+
+<!--
+  babylon.js and babylonjs-loaders.js are served from
+  the runner's local HTTP server pointing at node_modules/.
+  No CDN dependency: offline and CI safe.
+-->
+<script src="/babylon.js"></script>
+<script src="/babylonjs-loaders.js"></script>
+
+<script>
+/* global BABYLON */
+(async function swim26Render() {
+  'use strict';
+
+  // ---- Helpers ----
+  function log(msg) {
+    if (typeof console !== 'undefined') {
+      console.log('[swim26-renderer] ' + msg);
+    }
+  }
+
+  function hexToColor4(hex) {
+    var m = (hex || '').replace('#', '').match(/.{2}/g);
+    if (!m || m.length < 3) return new BABYLON.Color4(0.06, 0.09, 0.17, 1.0);
+    return new BABYLON.Color4(
+      parseInt(m[0], 16) / 255,
+      parseInt(m[1], 16) / 255,
+      parseInt(m[2], 16) / 255,
+      1.0
+    );
+  }
+
+  function hexToColor3(hex) {
+    var m = (hex || '').replace('#', '').match(/.{2}/g);
+    if (!m || m.length < 3) return new BABYLON.Color3(0.67, 0.67, 0.67);
+    return new BABYLON.Color3(
+      parseInt(m[0], 16) / 255,
+      parseInt(m[1], 16) / 255,
+      parseInt(m[2], 16) / 255
+    );
+  }
+
+  // ---- Validate context ----
+  var manifest = window.__SWIM26_MANIFEST__;
+  var cfg = window.__SWIM26_CONFIG__ || { width: 1280, height: 720, frames: 5, cameraId: 'swim26-fixed-overhead' };
+
+  if (!manifest) {
+    window.__SWIM26_ERROR__ = 'No manifest injected. window.__SWIM26_MANIFEST__ is not set.';
+    window.__SWIM26_RENDER_DONE__ = true;
+    return;
+  }
+
+  if (typeof BABYLON === 'undefined') {
+    window.__SWIM26_ERROR__ = 'Babylon.js did not load. /babylon.js was not served correctly.';
+    window.__SWIM26_RENDER_DONE__ = true;
+    return;
+  }
+
+  log('Babylon.js loaded: ' + BABYLON.Engine.Version);
+  log('Config: ' + JSON.stringify(cfg));
+
+  // ---- Canvas ----
+  var canvas = document.getElementById('renderCanvas');
+  canvas.width  = cfg.width;
+  canvas.height = cfg.height;
+
+  // ---- Engine ----
+  var engine;
+  try {
+    engine = new BABYLON.Engine(canvas, /* antialias */ false, {
+      preserveDrawingBuffer: true,  // required for screenshot capture
+      stencil: true,
+      antialias: false,             // determinism: no AA jitter
+      adaptToDeviceRatio: false,    // determinism: ignore device pixel ratio
+    });
+  } catch (err) {
+    window.__SWIM26_ERROR__ = 'Babylon.js Engine creation failed: ' + err.message;
+    window.__SWIM26_RENDER_DONE__ = true;
+    return;
+  }
+
+  engine.setHardwareScalingLevel(1); // determinism: 1:1 pixel output
+
+  // ---- Scene ----
+  var scene = new BABYLON.Scene(engine);
+  scene.useRightHandedSystem = false;
+
+  // ---- Environment ----
+  var envSettings = manifest.authoredContent && manifest.authoredContent.environment;
+  var bgHex = (envSettings && envSettings.backgroundColor) || '#1e2a44';
+  scene.clearColor = hexToColor4(bgHex);
+
+  // Deterministic ambient lighting — no IBL, no environment texture,
+  // just a fixed hemispheric light so placeholder geometry is readable.
+  var ambientLight = new BABYLON.HemisphericLight(
+    'swim26-ambient',
+    new BABYLON.Vector3(0, 1, 0),
+    scene
+  );
+  ambientLight.intensity = 0.9;
+  ambientLight.diffuse   = new BABYLON.Color3(1, 1, 1);
+  ambientLight.specular  = new BABYLON.Color3(0.2, 0.2, 0.2);
+  ambientLight.groundColor = new BABYLON.Color3(0.3, 0.3, 0.4);
+
+  // ---- Deterministic camera ----
+  // Fixed overhead position matches the swim26-fixed-overhead camera ID.
+  // Position: (0, 8, 20) targeting origin. FOV 0.8 rad. These values are
+  // part of the deterministic render policy and must not change between runs.
+  var camera = new BABYLON.FreeCamera(
+    cfg.cameraId || 'swim26-fixed-overhead',
+    new BABYLON.Vector3(0, 8, 20),
+    scene
+  );
+  camera.setTarget(BABYLON.Vector3.Zero());
+  camera.minZ = 0.1;
+  camera.maxZ = 500;
+  camera.fov  = 0.8;
+
+  // ---- Asset loading ----
+  var loaderCalls    = [];
+  var loadWarnings   = [];
+  var loadedAnyReal  = false;
+  var nodes = (manifest.authoredContent && manifest.authoredContent.objects) || [];
+
+  log('Nodes to load: ' + nodes.length);
+
+  for (var ni = 0; ni < nodes.length; ni++) {
+    var node    = nodes[ni];
+    var pos     = (node.transform && node.transform.position) || [ni * 2, 0, 0];
+    var rot     = (node.transform && node.transform.rotation) || [0, 0, 0];
+    var scl     = (node.transform && node.transform.scale)    || [1, 1, 1];
+    var colorHex = (node.material && node.material.color)     || '#888888';
+    var nodeId   = node.id || ('node-' + ni);
+
+    var meshesLoaded = null;
+
+    // Attempt SceneLoader.ImportMeshAsync — this is the SceneLoader-backed
+    // asset path that provides loader call evidence for host verification.
+    if (node.assetRef && node.assetRef.type === 'url' && node.assetRef.value) {
+      var assetUrl = node.assetRef.value;
+      loaderCalls.push({ rootUrl: assetUrl, sceneFilename: assetUrl });
+      log('SceneLoader.ImportMeshAsync → ' + assetUrl);
+      try {
+        var loadResult = await BABYLON.SceneLoader.ImportMeshAsync(null, assetUrl, '', scene);
+        meshesLoaded = loadResult.meshes;
+        loadedAnyReal = true;
+        log('Loaded ' + meshesLoaded.length + ' meshes from ' + assetUrl);
+      } catch (loadErr) {
+        var warnMsg = 'Asset load failed [' + assetUrl + ']: ' + loadErr.message + ' — using placeholder geometry';
+        loadWarnings.push(warnMsg);
+        log(warnMsg);
+        meshesLoaded = null;
+      }
+    }
+
+    if (!meshesLoaded || meshesLoaded.length === 0) {
+      // Placeholder: colored box at the authored transform position.
+      // This keeps the structural layout correct even when assets are unavailable.
+      var box = BABYLON.MeshBuilder.CreateBox(nodeId, { width: 1, height: 1, depth: 1 }, scene);
+      var mat = new BABYLON.StandardMaterial('mat-' + nodeId, scene);
+      mat.diffuseColor = hexToColor3(colorHex);
+
+      if (node.material && typeof node.material.metalness === 'number') {
+        var m = node.material.metalness;
+        mat.specularColor = new BABYLON.Color3(m, m, m);
+        mat.specularPower = 32;
+      }
+      if (node.material && typeof node.material.roughness === 'number') {
+        mat.specularPower = Math.max(1, (1 - node.material.roughness) * 128);
+      }
+
+      box.material = mat;
+      box.position = new BABYLON.Vector3(pos[0], pos[1], pos[2]);
+      box.rotation = new BABYLON.Vector3(rot[0], rot[1], rot[2]);
+      box.scaling  = new BABYLON.Vector3(scl[0], scl[1], scl[2]);
+    } else {
+      // Apply authored transforms to the top-level imported meshes.
+      for (var mi = 0; mi < meshesLoaded.length; mi++) {
+        var mesh = meshesLoaded[mi];
+        if (mesh.parent) continue;
+        mesh.position = new BABYLON.Vector3(pos[0], pos[1], pos[2]);
+        mesh.rotation = new BABYLON.Vector3(rot[0], rot[1], rot[2]);
+        mesh.scaling  = new BABYLON.Vector3(scl[0], scl[1], scl[2]);
+      }
+    }
+  }
+
+  // ---- Render loop — warmup frames then capture ----
+  var frameCount = 0;
+  var targetFrames = Math.max(1, cfg.frames || 5);
+
+  engine.runRenderLoop(function() {
+    try {
+      scene.render();
+    } catch (renderErr) {
+      engine.stopRenderLoop();
+      window.__SWIM26_ERROR__ = 'scene.render() failed on frame ' + frameCount + ': ' + renderErr.message;
+      window.__SWIM26_RENDER_DONE__ = true;
+      return;
+    }
+
+    frameCount++;
+
+    if (frameCount >= targetFrames) {
+      engine.stopRenderLoop();
+
+      window.__SWIM26_METADATA__ = {
+        // Fields required by Swim26ScreenshotCaptureResult.metadata
+        engine:               'Babylon.js ' + BABYLON.Engine.Version,
+        captureMode:          'framebuffer',
+        width:                cfg.width,
+        height:               cfg.height,
+        framesRendered:       frameCount,
+        deterministicCameraId: cfg.cameraId || 'swim26-fixed-overhead',
+        loaderCallsObserved:  loaderCalls.length,
+
+        // Additional evidence fields
+        loaderCalls:          loaderCalls,
+        loadedRealAssets:     loadedAnyReal,
+        loadWarnings:         loadWarnings,
+        usedPlaceholderGeometry: !loadedAnyReal,
+        environmentPresetId:  (envSettings && envSettings.presetId) || null,
+        environmentIntensity: (envSettings && envSettings.intensity) || null,
+        clearColor:           bgHex,
+        antialias:            false,
+        hardwareScalingLevel: 1,
+        preserveDrawingBuffer: true,
+      };
+
+      log('Render complete. frames=' + frameCount + ' loaderCalls=' + loaderCalls.length);
+      window.__SWIM26_RENDER_DONE__ = true;
+    }
+  });
+
+})().catch(function(err) {
+  window.__SWIM26_ERROR__ = 'Unhandled renderer error: ' + (err && err.message ? err.message : String(err));
+  window.__SWIM26_RENDER_DONE__ = true;
+});
+</script>
+</body>
+</html>

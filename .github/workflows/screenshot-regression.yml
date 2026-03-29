@@ -1,0 +1,159 @@
+# SWIM26 Screenshot Regression CI
+#
+# Runs the external Babylon.js screenshot runner against SWIM26 fixture manifests,
+# compares output against baselines, and uploads artifacts for inspection.
+#
+# Environment requirements:
+#   - Ubuntu runner with Chromium system dependencies
+#   - Node.js >= 18
+#   - tools/babylon-screenshot-runner/node_modules must be installed
+#   - Chromium is downloaded automatically by puppeteer on first run (cached)
+#
+# Blocked-environment behavior:
+#   If puppeteer/babylonjs are not installed, the runner exits with code 3
+#   (BLOCKED_ENV). The regression test reports this as `blocked: true` in the
+#   diff artifact, which is distinct from a true screenshot regression failure.
+#
+# Baseline management:
+#   Baselines live in artifacts/baselines-real/.
+#   To update baselines: run generate-baselines locally and commit the new PNGs.
+#   See BABYLON_SCREENSHOT_RUNNER.md for the baseline generation procedure.
+
+name: SWIM26 Screenshot Regression
+
+on:
+  push:
+    branches:
+      - main
+      - 'claude/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  screenshot-regression:
+    name: Babylon Screenshot Regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Node.js ───────────────────────────────────────────────────────────
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # ── Titan dependencies ────────────────────────────────────────────────
+      - name: Install Titan dependencies
+        run: npm ci
+
+      # ── Runner dependencies ───────────────────────────────────────────────
+      # puppeteer downloads Chromium (~170MB) into ~/.cache/puppeteer.
+      # Cached by package.json hash so it survives across runs until deps change.
+      # Note: uses npm install (not npm ci) because package-lock.json for the
+      # runner is not committed. Commit it and switch to npm ci for reproducible installs.
+      - name: Cache puppeteer Chromium
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/puppeteer
+          key: puppeteer-chromium-${{ runner.os }}-${{ hashFiles('tools/babylon-screenshot-runner/package.json') }}
+          restore-keys: |
+            puppeteer-chromium-${{ runner.os }}-
+
+      - name: Install Babylon screenshot runner dependencies
+        working-directory: tools/babylon-screenshot-runner
+        run: npm install --no-audit --prefer-offline
+
+      # ── Chromium system libraries ─────────────────────────────────────────
+      # These are required for headless Chromium on Ubuntu GitHub Actions runners.
+      # The list matches what puppeteer's own CI setup requires.
+      - name: Install Chromium system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libatk1.0-0 \
+            libatk-bridge2.0-0 \
+            libcups2 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnss3 \
+            libxss1 \
+            libxshmfence1 \
+            fonts-liberation
+
+      # ── Runner contract tests ─────────────────────────────────────────────
+      # Validates exit codes, stderr signals, and output file contracts.
+      - name: Run runner contract tests
+        working-directory: tools/babylon-screenshot-runner
+        run: node runner.test.js
+
+      # ── Screenshot regression ─────────────────────────────────────────────
+      # Sets SWIM26_REAL_SCREENSHOT_CMD to the installed runner and executes
+      # Titan's regression test suite.
+      #
+      # If no baselines exist: test reports `blocked: false` but `screenshotPass: false`
+      # with reason "Real screenshot baseline is missing." This is expected on first run.
+      # Generate baselines locally and commit them (see BABYLON_SCREENSHOT_RUNNER.md).
+      - name: Run SWIM26 screenshot regression
+        run: npm run test:swim26-real-render
+        env:
+          SWIM26_REAL_SCREENSHOT_CMD: node ${{ github.workspace }}/tools/babylon-screenshot-runner/runner.js
+
+      # ── Artifact upload ───────────────────────────────────────────────────
+      # Always upload artifacts so failures are inspectable even on error exit.
+      - name: Upload screenshot regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: swim26-screenshot-regression-${{ github.run_number }}
+          path: |
+            artifacts/current-real/
+            artifacts/baselines-real/
+          retention-days: 30
+          if-no-files-found: warn
+
+      # ── Summary ───────────────────────────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## SWIM26 Screenshot Regression" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| File | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|------|" >> $GITHUB_STEP_SUMMARY
+          if [ -d "artifacts/current-real" ]; then
+            for f in artifacts/current-real/*; do
+              [ -f "$f" ] && echo "| $(basename $f) | $(du -sh $f | cut -f1) |" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "| *(no artifacts)* | — |" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Diff JSON reports in \`artifacts/current-real/*.real.diff.json\`" >> $GITHUB_STEP_SUMMARY
+
+  # Separate job: runner CLI contract validation only (fast, no GPU required)
+  runner-contract:
+    name: Runner CLI Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run runner contract tests (no puppeteer required)
+        working-directory: tools/babylon-screenshot-runner
+        run: node runner.test.js
+        # This job validates arg parsing, exit codes, and stderr signals.
+        # It does NOT require puppeteer to be installed — the full render test
+        # is skipped with an explicit "(skipped: puppeteer not installed)" message.
