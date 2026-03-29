@@ -6,6 +6,7 @@ interface ProjectOnboardingModalProps {
   guidance: ProjectSelectionGuidance;
   onCreateProject: (payload: { projectName: string; profileHint?: string }) => void;
   onOpenExisting: () => void;
+  onImportFromGitHub: () => void;
 }
 
 export default function ProjectOnboardingModal({
@@ -13,6 +14,7 @@ export default function ProjectOnboardingModal({
   guidance,
   onCreateProject,
   onOpenExisting,
+  onImportFromGitHub,
 }: ProjectOnboardingModalProps) {
   const [projectName, setProjectName] = useState('My Project');
   const defaultProfile = useMemo(() => guidance.options[0]?.profileId, [guidance.options]);
@@ -62,12 +64,20 @@ export default function ProjectOnboardingModal({
         </div>
 
         <div className="flex justify-between items-center pt-2">
-          <button
-            onClick={onOpenExisting}
-            className="text-xs text-white/60 hover:text-white border border-white/10 rounded px-3 py-2"
-          >
-            OPEN LAST PROJECT
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onOpenExisting}
+              className="text-xs text-white/60 hover:text-white border border-white/10 rounded px-3 py-2"
+            >
+              OPEN LAST PROJECT
+            </button>
+            <button
+              onClick={onImportFromGitHub}
+              className="text-xs text-blue-200 hover:text-white border border-blue-300/30 rounded px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20"
+            >
+              IMPORT FROM GITHUB
+            </button>
+          </div>
           <button
             onClick={() => onCreateProject({ projectName, profileHint })}
             data-testid="start-project-button"

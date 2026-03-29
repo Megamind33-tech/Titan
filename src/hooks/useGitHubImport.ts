@@ -61,8 +61,8 @@ export interface UseGitHubImportState {
  * Hook return value
  */
 export interface UseGitHubImportReturn extends UseGitHubImportState {
-  importRepository: (repoInput: string, profileIdHint?: string) => Promise<void>;
-  prepareImport: (repoInput: string) => Promise<any>;
+  importRepository: (repoInput: string, profileIdHint?: string, authToken?: string) => Promise<void>;
+  prepareImport: (repoInput: string, authToken?: string) => Promise<any>;
   clear: () => void;
   retry: () => Promise<void>;
 }
@@ -90,7 +90,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
   }, []);
 
   const importRepository = useCallback(
-    async (repoInput: string, profileIdHint?: string) => {
+    async (repoInput: string, profileIdHint?: string, authToken?: string) => {
       setLastInput(repoInput);
 
       try {
@@ -112,7 +112,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
 
         // Phase 3: Fetch and ingest repository
         updateProgress('loading', 'Loading repository data from GitHub...', 40);
-        const result = await importer.importRepository(repoInput, profileIdHint);
+        const result = await importer.importRepository(repoInput, profileIdHint, authToken);
 
         if (!result.success) {
           setState(prev => ({
@@ -167,10 +167,10 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
   );
 
   const prepareImport = useCallback(
-    async (repoInput: string) => {
+    async (repoInput: string, authToken?: string) => {
       try {
         updateProgress('detecting', 'Detecting project...', 20);
-        const preparation = await importer.prepareImport(repoInput);
+        const preparation = await importer.prepareImport(repoInput, authToken);
 
         if (!preparation.valid) {
           setState(prev => ({

@@ -75,15 +75,18 @@ export interface GitHubFileContent {
 export type GitHubAccessMode = 'public-only' | 'authenticated' | 'oauth';
 
 /**
- * Supported file extensions for inspection
+ * Default metadata/config files that the connector may fetch for import orchestration.
  */
-export const SUPPORTED_MANIFEST_FILES = [
+export const DEFAULT_SUPPORTED_IMPORT_FILES = [
   'swim26.manifest.json',
   'babylon.config.json',
   'swim26.config.json',
   'package.json',
   'README.md',
 ];
+
+// Backwards-compatible alias (legacy name)
+export const SUPPORTED_MANIFEST_FILES = DEFAULT_SUPPORTED_IMPORT_FILES;
 
 /**
  * Blocked file patterns that must not be imported

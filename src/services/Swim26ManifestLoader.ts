@@ -103,6 +103,8 @@ export interface ManifestLoaderError {
   path?: string;
 }
 
+export const SUPPORTED_SWIM26_MANIFEST_VERSIONS = ['1.0.0', '1.1.0'] as const;
+
 /**
  * Load and parse SWIM26 manifest file
  */
@@ -119,6 +121,20 @@ export const loadSwim26Manifest = (
       errors.push({
         type: 'INVALID_STRUCTURE',
         message: `Invalid manifest type: "${data.type}". Expected "swim26.scene-manifest" or similar.`,
+        path: fileContent.path,
+      });
+    }
+
+    if (!data.version || typeof data.version !== 'string') {
+      errors.push({
+        type: 'MISSING_DATA',
+        message: 'Manifest is missing a valid string version field.',
+        path: fileContent.path,
+      });
+    } else if (!SUPPORTED_SWIM26_MANIFEST_VERSIONS.includes(data.version as typeof SUPPORTED_SWIM26_MANIFEST_VERSIONS[number])) {
+      errors.push({
+        type: 'UNSUPPORTED_VERSION',
+        message: `Unsupported manifest version "${data.version}". Supported versions: ${SUPPORTED_SWIM26_MANIFEST_VERSIONS.join(', ')}`,
         path: fileContent.path,
       });
     }
@@ -315,12 +331,37 @@ export const validateManifest = (manifest: Swim26ManifestData): {
 
   if (!manifest.version) {
     issues.push('Missing required field: version');
+  } else if (!SUPPORTED_SWIM26_MANIFEST_VERSIONS.includes(manifest.version as typeof SUPPORTED_SWIM26_MANIFEST_VERSIONS[number])) {
+    issues.push(`Unsupported manifest version: ${manifest.version}`);
   }
 
   // Check scene data
   const objects = extractObjects(manifest);
   if (objects.length === 0) {
     warnings.push('No scene objects found in manifest');
+  } else {
+    objects.forEach((object, index) => {
+      if (!object?.id && !object?.authoredId) {
+        issues.push(`Object at index ${index} is missing id/authoredId`);
+      }
+      if (!object?.name || typeof object.name !== 'string') {
+        issues.push(`Object at index ${index} is missing name`);
+      }
+      if (object?.transform) {
+        const vectors: Array<{ key: string; value: unknown }> = [
+          { key: 'position', value: object.transform.position },
+          { key: 'rotation', value: object.transform.rotation },
+          { key: 'scale', value: object.transform.scale },
+        ];
+
+        vectors.forEach(({ key, value }) => {
+          const isTuple = Array.isArray(value) && value.length === 3 && value.every((n: unknown) => Number.isFinite(n as number));
+          if (!isTuple) {
+            issues.push(`Object ${object.name || object.id || index} has invalid transform.${key}`);
+          }
+        });
+      }
+    });
   }
 
   // Check for missing assets
@@ -331,7 +372,8 @@ export const validateManifest = (manifest: Swim26ManifestData): {
 
   // Check scene info
   const sceneInfo = extractSceneInfo(manifest);
-  if (!sceneInfo.name || sceneInfo.name === 'Imported Scene') {
+  const explicitSceneName = safeGet(manifest, ['authoredContent', 'sceneInfo', 'name']) || safeGet(manifest, ['sceneInfo', 'name']);
+  if (!explicitSceneName || sceneInfo.name === 'Imported Scene') {
     warnings.push('Scene name not set or using default');
   }
 

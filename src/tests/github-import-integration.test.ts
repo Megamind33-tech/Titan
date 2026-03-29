@@ -100,6 +100,19 @@ describe('GitHub Import - Input Validation', () => {
     const result = importer.validateRepoInput('  babylonjs/Babylon.js  ');
     assert.strictEqual(result.valid, true);
   });
+
+  it('accepts subpath references for scoped imports', () => {
+    const result = importer.validateRepoInput('https://github.com/owner/repo/tree/main/scenes/demo');
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.reference?.branch, 'main');
+    assert.strictEqual(result.reference?.subpath, 'scenes/demo');
+  });
+
+  it('rejects unsafe subpath traversal', () => {
+    const result = importer.validateRepoInput('https://github.com/owner/repo/tree/main/../../secrets');
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.errors[0].includes('Folder path'));
+  });
 });
 
 describe('GitHub Import - Preparation (Preview)', () => {
@@ -298,6 +311,38 @@ describe('GitHub Import - Full Import Flow', () => {
 
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.session?.profileId, 'profile.swim26.babylon.v1');
+  });
+
+  it('fails import when manifest schema is invalid', async () => {
+    const mockConnector = new MockGitHubConnector();
+    const importer = new GitHubRepoImporter(mockConnector);
+
+    mockConnector.registerMockRepo('test', 'broken-manifest', {
+      success: true,
+      metadata: {
+        owner: 'test',
+        repo: 'broken-manifest',
+        url: 'https://github.com/test/broken-manifest',
+        isPrivate: false,
+        defaultBranch: 'main',
+      },
+      branch: 'main',
+      files: new Map([
+        ['swim26.manifest.json', mockFile(JSON.stringify({
+          version: '1.0.0',
+          type: 'swim26.scene-manifest',
+          objects: [{ id: 'o1', name: 'Broken', transform: { position: [0, 1], rotation: [0, 0, 0], scale: [1, 1, 1] } }],
+        }))],
+      ]),
+      errors: [],
+      warnings: [],
+    });
+
+    const result = await importer.importRepository('test/broken-manifest');
+
+    assert.strictEqual(result.success, false);
+    assert.ok(result.errors.some(error => error.includes('Manifest validation')));
+    assert.strictEqual(result.session, undefined);
   });
 });
 
