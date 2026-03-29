@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>SWIM26 Babylon Screenshot Renderer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { overflow: hidden; background: #000; }
+    #renderCanvas { display: block; }
+  </style>
+</head>
+<body>
+<canvas id="renderCanvas"></canvas>
+
+<!--
+  babylon.js and babylonjs-loaders.js are served from
+  the runner's local HTTP server pointing at node_modules/.
+  No CDN dependency: offline and CI safe.
+-->
+<script src="/babylon.js"></script>
+<script src="/babylonjs-loaders.js"></script>
+
+<script>
+/* global BABYLON */
+(async function swim26Render() {
+  'use strict';
+
+  // ---- Helpers ----
+  function log(msg) {
+    if (typeof console !== 'undefined') {
+      console.log('[swim26-renderer] ' + msg);
+    }
+  }
+
+  function hexToColor4(hex) {
+    var m = (hex || '').replace('#', '').match(/.{2}/g);
+    if (!m || m.length < 3) return new BABYLON.Color4(0.06, 0.09, 0.17, 1.0);
+    return new BABYLON.Color4(
+      parseInt(m[0], 16) / 255,
+      parseInt(m[1], 16) / 255,
+      parseInt(m[2], 16) / 255,
+      1.0
+    );
+  }
+
+  function hexToColor3(hex) {
+    var m = (hex || '').replace('#', '').match(/.{2}/g);
+    if (!m || m.length < 3) return new BABYLON.Color3(0.67, 0.67, 0.67);
+    return new BABYLON.Color3(
+      parseInt(m[0], 16) / 255,
+      parseInt(m[1], 16) / 255,
+      parseInt(m[2], 16) / 255
+    );
+  }
+
+  // ---- Query WebGL context evidence ----
+  // Called after engine creation to prove what rendering pipeline is active.
+  // Does NOT call getContext('webgl*') before Babylon — Babylon must own the context.
+  function queryWebGLEvidence(canvas, engine) {
+    // Retrieve the context Babylon already created (same call returns existing context).
+    var gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || null;
+    var evidence = {
+      webglVersion:   0,
+      glVersion:      null,
+      glRenderer:     null,
+      glVendor:       null,
+      glShadingLang:  null,
+      maxTextureSize: null,
+    };
+
+    if (!gl) {
+      log('WARNING: WebGL context not available on canvas after engine creation.');
+      return evidence;
+    }
+
+    evidence.webglVersion   = canvas.getContext('webgl2') ? 2 : 1;
+    evidence.glVersion      = gl.getParameter(gl.VERSION)          || 'unknown';
+    evidence.glShadingLang  = gl.getParameter(gl.SHADING_LANGUAGE_VERSION) || 'unknown';
+    evidence.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) || null;
+
+    // WEBGL_debug_renderer_info is available on most desktop Chrome/Chromium.
+    // It reveals the actual renderer name (e.g. "Google SwiftShader" for software).
+    var debugExt = gl.getExtension('WEBGL_debug_renderer_info');
+    if (debugExt) {
+      evidence.glRenderer = gl.getParameter(debugExt.UNMASKED_RENDERER_WEBGL) || 'unknown';
+      evidence.glVendor   = gl.getParameter(debugExt.UNMASKED_VENDOR_WEBGL)   || 'unknown';
+    } else {
+      // Extension unavailable: use masked strings as fallback
+      evidence.glRenderer = gl.getParameter(gl.RENDERER) || 'unknown';
+      evidence.glVendor   = gl.getParameter(gl.VENDOR)   || 'unknown';
+    }
+
+    log('WebGL version=' + evidence.webglVersion + ' renderer=' + evidence.glRenderer);
+    return evidence;
+  }
+
+  // ---- Read a pixel from the framebuffer to prove rendering happened ----
+  // readPixels requires preserveDrawingBuffer: true (set in engine options).
+  // Returns [r, g, b, a] or an error string if readPixels fails.
+  function sampleCenterPixel(canvas, engine) {
+    var w = engine.getRenderWidth();
+    var h = engine.getRenderHeight();
+    var gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    if (!gl) return 'NO_GL_CONTEXT';
+    try {
+      var buf = new Uint8Array(4);
+      gl.readPixels(
+        Math.floor(w / 2),
+        Math.floor(h / 2),
+        1, 1,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        buf
+      );
+      // Check for WebGL error
+      var err = gl.getError();
+      if (err !== gl.NO_ERROR) {
+        return 'GL_ERROR_' + err;
+      }
+      return [buf[0], buf[1], buf[2], buf[3]];
+    } catch (e) {
+      return 'EXCEPTION: ' + e.message;
+    }
+  }
+
+  // ---- Validate context ----
+  var manifest = window.__SWIM26_MANIFEST__;
+  var cfg = window.__SWIM26_CONFIG__ || { width: 1280, height: 720, frames: 5, cameraId: 'swim26-fixed-overhead' };
+
+  if (!manifest) {
+    window.__SWIM26_ERROR__ = 'No manifest injected. window.__SWIM26_MANIFEST__ is not set.';
+    window.__SWIM26_RENDER_DONE__ = true;
+    return;
+  }
+
+  if (typeof BABYLON === 'undefined') {
+    window.__SWIM26_ERROR__ = 'Babylon.js did not load. /babylon.js was not served correctly.';
+    window.__SWIM26_RENDER_DONE__ = true;
+    return;
+  }
+
+  log('Babylon.js loaded: ' + BABYLON.Engine.Version);
+  log('Config: ' + JSON.stringify(cfg));
+
+  // ---- Canvas ----
+  var canvas = document.getElementById('renderCanvas');
+  canvas.width  = cfg.width;
+  canvas.height = cfg.height;
+
+  // ---- Engine ----
+  var engine;
+  try {
+    engine = new BABYLON.Engine(canvas, /* antialias */ false, {
+      preserveDrawingBuffer: true,  // REQUIRED: page.screenshot() reads the drawing buffer;
+                                    // without this, the buffer may be cleared before capture.
+      stencil: true,
+      antialias: false,             // determinism: no AA jitter between runs
+      adaptToDeviceRatio: false,    // determinism: ignore device pixel ratio
+    });
+  } catch (err) {
+    window.__SWIM26_ERROR__ = 'Babylon.js Engine creation failed: ' + err.message;
+    window.__SWIM26_RENDER_DONE__ = true;
+    return;
+  }
+
+  engine.setHardwareScalingLevel(1); // determinism: 1:1 pixel output, no DPI scaling
+
+  // Query WebGL evidence immediately after engine creation.
+  // engine._gl is Babylon's internal reference; we retrieve the same context
+  // via canvas.getContext() which returns the existing context safely.
+  var glEvidence = queryWebGLEvidence(canvas, engine);
+
+  if (glEvidence.webglVersion === 0) {
+    window.__SWIM26_ERROR__ = 'WebGL context unavailable after engine creation. Babylon.js cannot render.';
+    window.__SWIM26_RENDER_DONE__ = true;
+    return;
+  }
+
+  // Report actual render dimensions from the engine, not from cfg.
+  // If Babylon clamped or scaled the canvas, these will differ from cfg.
+  var actualRenderWidth  = engine.getRenderWidth();
+  var actualRenderHeight = engine.getRenderHeight();
+
+  if (actualRenderWidth !== cfg.width || actualRenderHeight !== cfg.height) {
+    log('WARNING: Engine render dimensions ' + actualRenderWidth + 'x' + actualRenderHeight
+      + ' differ from requested ' + cfg.width + 'x' + cfg.height
+      + '. Metadata will report actual dimensions.');
+  }
+
+  // ---- Scene ----
+  var scene = new BABYLON.Scene(engine);
+  scene.useRightHandedSystem = false;
+
+  // ---- Environment ----
+  var envSettings = manifest.authoredContent && manifest.authoredContent.environment;
+  var bgHex = (envSettings && envSettings.backgroundColor) || '#1e2a44';
+  scene.clearColor = hexToColor4(bgHex);
+
+  // Deterministic ambient lighting — no IBL, no environment texture,
+  // just a fixed hemispheric light so placeholder geometry is readable.
+  var ambientLight = new BABYLON.HemisphericLight(
+    'swim26-ambient',
+    new BABYLON.Vector3(0, 1, 0),
+    scene
+  );
+  ambientLight.intensity = 0.9;
+  ambientLight.diffuse   = new BABYLON.Color3(1, 1, 1);
+  ambientLight.specular  = new BABYLON.Color3(0.2, 0.2, 0.2);
+  ambientLight.groundColor = new BABYLON.Color3(0.3, 0.3, 0.4);
+
+  // ---- Deterministic camera ----
+  // Fixed overhead position. Position (0,8,20) targeting origin, FOV 0.8 rad.
+  // These values are part of the deterministic render policy.
+  var camera = new BABYLON.FreeCamera(
+    cfg.cameraId || 'swim26-fixed-overhead',
+    new BABYLON.Vector3(0, 8, 20),
+    scene
+  );
+  camera.setTarget(BABYLON.Vector3.Zero());
+  camera.minZ = 0.1;
+  camera.maxZ = 500;
+  camera.fov  = 0.8;
+
+  // ---- Asset loading ----
+  var loaderCalls    = [];
+  var loadWarnings   = [];
+  var loadedAnyReal  = false;
+  var nodes = (manifest.authoredContent && manifest.authoredContent.objects) || [];
+
+  log('Nodes to load: ' + nodes.length);
+
+  for (var ni = 0; ni < nodes.length; ni++) {
+    var node    = nodes[ni];
+    var pos     = (node.transform && node.transform.position) || [ni * 2, 0, 0];
+    var rot     = (node.transform && node.transform.rotation) || [0, 0, 0];
+    var scl     = (node.transform && node.transform.scale)    || [1, 1, 1];
+    var colorHex = (node.material && node.material.color)     || '#888888';
+    var nodeId   = node.id || ('node-' + ni);
+
+    var meshesLoaded = null;
+
+    // Attempt SceneLoader.ImportMeshAsync — this is the SceneLoader-backed
+    // asset path that provides loader call evidence for host verification.
+    if (node.assetRef && node.assetRef.type === 'url' && node.assetRef.value) {
+      var assetUrl = node.assetRef.value;
+      // Split URL into rootUrl + sceneFilename to match Babylon.js loader conventions.
+      var lastSlash = assetUrl.lastIndexOf('/');
+      var assetRootUrl  = lastSlash >= 0 ? assetUrl.substring(0, lastSlash + 1) : '/';
+      var assetFilename = lastSlash >= 0 ? assetUrl.substring(lastSlash + 1)    : assetUrl;
+      loaderCalls.push({ rootUrl: assetRootUrl, sceneFilename: assetFilename, fullUrl: assetUrl });
+      log('SceneLoader.ImportMeshAsync rootUrl=' + assetRootUrl + ' file=' + assetFilename);
+      try {
+        var loadResult = await BABYLON.SceneLoader.ImportMeshAsync(null, assetRootUrl, assetFilename, scene);
+        meshesLoaded = loadResult.meshes;
+        loadedAnyReal = true;
+        log('Loaded ' + meshesLoaded.length + ' meshes from ' + assetUrl);
+      } catch (loadErr) {
+        var warnMsg = 'Asset load failed [' + assetUrl + ']: ' + loadErr.message + ' — using placeholder geometry';
+        loadWarnings.push(warnMsg);
+        log(warnMsg);
+        meshesLoaded = null;
+      }
+    }
+
+    if (!meshesLoaded || meshesLoaded.length === 0) {
+      // Placeholder: colored box at the authored transform position.
+      var box = BABYLON.MeshBuilder.CreateBox(nodeId, { width: 1, height: 1, depth: 1 }, scene);
+      var mat = new BABYLON.StandardMaterial('mat-' + nodeId, scene);
+      mat.diffuseColor = hexToColor3(colorHex);
+
+      if (node.material && typeof node.material.metalness === 'number') {
+        var met = node.material.metalness;
+        mat.specularColor = new BABYLON.Color3(met, met, met);
+        mat.specularPower = 32;
+      }
+      if (node.material && typeof node.material.roughness === 'number') {
+        mat.specularPower = Math.max(1, (1 - node.material.roughness) * 128);
+      }
+
+      box.material = mat;
+      box.position = new BABYLON.Vector3(pos[0], pos[1], pos[2]);
+      box.rotation = new BABYLON.Vector3(rot[0], rot[1], rot[2]);
+      box.scaling  = new BABYLON.Vector3(scl[0], scl[1], scl[2]);
+    } else {
+      // Apply authored transforms to the top-level imported meshes.
+      for (var mi = 0; mi < meshesLoaded.length; mi++) {
+        var mesh = meshesLoaded[mi];
+        if (mesh.parent) continue;
+        mesh.position = new BABYLON.Vector3(pos[0], pos[1], pos[2]);
+        mesh.rotation = new BABYLON.Vector3(rot[0], rot[1], rot[2]);
+        mesh.scaling  = new BABYLON.Vector3(scl[0], scl[1], scl[2]);
+      }
+    }
+  }
+
+  // ---- Render loop — warmup frames then capture ----
+  var frameCount = 0;
+  var targetFrames = Math.max(1, cfg.frames || 5);
+
+  engine.runRenderLoop(function() {
+    try {
+      scene.render();
+    } catch (renderErr) {
+      engine.stopRenderLoop();
+      window.__SWIM26_ERROR__ = 'scene.render() failed on frame ' + frameCount + ': ' + renderErr.message;
+      window.__SWIM26_RENDER_DONE__ = true;
+      return;
+    }
+
+    frameCount++;
+
+    if (frameCount >= targetFrames) {
+      engine.stopRenderLoop();
+
+      // Sample a pixel from the center of the framebuffer.
+      // This proves rendering actually wrote pixels, not just cleared the buffer.
+      // Requires preserveDrawingBuffer: true (set above).
+      // Format: [r, g, b, a] 0-255, or error string if readPixels failed.
+      var centerPixelSample = sampleCenterPixel(canvas, engine);
+
+      // captureMode is evidence-based: 'framebuffer' only if a real WebGL
+      // context exists with a non-zero version. 'unknown' if context is missing.
+      var captureMode = (glEvidence.webglVersion > 0) ? 'framebuffer' : 'unknown';
+
+      window.__SWIM26_METADATA__ = {
+        // ---- Fields required by Swim26ScreenshotCaptureResult.metadata ----
+        engine:               'Babylon.js ' + BABYLON.Engine.Version,
+        captureMode:          captureMode,
+        // Use actual engine dimensions, not requested config dimensions.
+        // These will differ if the engine clamped the canvas size.
+        width:                actualRenderWidth,
+        height:               actualRenderHeight,
+        framesRendered:       frameCount,
+        deterministicCameraId: cfg.cameraId || 'swim26-fixed-overhead',
+        loaderCallsObserved:  loaderCalls.length,
+
+        // ---- WebGL context evidence ----
+        // These fields prove what actually rendered, not what was requested.
+        webglVersion:         glEvidence.webglVersion,
+        glRenderer:           glEvidence.glRenderer,
+        glVendor:             glEvidence.glVendor,
+        glVersion:            glEvidence.glVersion,
+        glShadingLang:        glEvidence.glShadingLang,
+        maxTextureSize:       glEvidence.maxTextureSize,
+
+        // ---- Framebuffer pixel sample ----
+        // Center pixel [r,g,b,a] read after final frame via gl.readPixels().
+        // A non-zero value confirms rendering wrote to the framebuffer.
+        // If this is [0,0,0,0] and the clear color is not black, rendering failed.
+        centerPixelSample:    centerPixelSample,
+
+        // ---- Asset loading evidence ----
+        loaderCalls:          loaderCalls,
+        loadedRealAssets:     loadedAnyReal,
+        loadWarnings:         loadWarnings,
+        usedPlaceholderGeometry: !loadedAnyReal,
+
+        // ---- Render configuration ----
+        requestedWidth:       cfg.width,
+        requestedHeight:      cfg.height,
+        environmentPresetId:  (envSettings && envSettings.presetId) || null,
+        environmentIntensity: (envSettings && envSettings.intensity) || null,
+        clearColor:           bgHex,
+        antialias:            false,
+        hardwareScalingLevel: 1,
+        preserveDrawingBuffer: true,
+      };
+
+      log('Render complete. frames=' + frameCount
+        + ' captureMode=' + captureMode
+        + ' glRenderer=' + glEvidence.glRenderer
+        + ' centerPixel=' + JSON.stringify(centerPixelSample));
+      window.__SWIM26_RENDER_DONE__ = true;
+    }
+  });
+
+})().catch(function(err) {
+  window.__SWIM26_ERROR__ = 'Unhandled renderer error: ' + (err && err.message ? err.message : String(err));
+  window.__SWIM26_RENDER_DONE__ = true;
+});
+</script>
+</body>
+</html>

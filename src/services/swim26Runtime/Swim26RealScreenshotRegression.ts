@@ -202,6 +202,10 @@ const compareRgba = (input: {
   return { similarity: 1 - (changedPixels / totalPixels), changedPixels, totalPixels, diffRgb };
 };
 
+// Maximum time to wait for the external screenshot runner before treating it
+// as a hung process.  2 minutes is generous for a headless Chromium render.
+const RUNNER_TIMEOUT_MS = 120_000;
+
 export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCapture => async ({ fixture, outputPath }) => {
   const command = process.env.SWIM26_REAL_SCREENSHOT_CMD;
   if (!command) {
@@ -212,19 +216,54 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
     };
   }
 
-  const [cmd, ...baseArgs] = command.split(' ').filter(Boolean);
-  const metadataPath = outputPath.replace(/\.png$/i, '.capture.json');
+  // SWIM26_REAL_SCREENSHOT_CMD is split on whitespace to extract cmd + base args.
+  // Limitation: paths with spaces in the command string will break this split.
+  // If your runner path contains spaces, wrap it in a shell script with no spaces
+  // in its path, or set SWIM26_REAL_SCREENSHOT_CMD to a wrapper script path.
+  const [cmd, ...baseArgs] = command.trim().split(/\s+/).filter(Boolean);
+  // Derive the metadata path from the output path.  outputPath must end in .png.
+  // If it does not, the metadata path will have '.capture.json' appended, which
+  // is unusual but harmless — the runner receives --metadata explicitly.
+  const metadataPath = /\.png$/i.test(outputPath)
+    ? outputPath.replace(/\.png$/i, '.capture.json')
+    : outputPath + '.capture.json';
   const proc = spawnSync(cmd, [...baseArgs, '--manifest', fixture.manifestPath, '--output', outputPath, '--metadata', metadataPath], {
     encoding: 'utf-8',
     stdio: 'pipe',
+    timeout: RUNNER_TIMEOUT_MS,
   });
 
-  if (proc.status !== 0) {
+  // proc.error is set if spawnSync itself failed (e.g. command not found, timeout).
+  if (proc.error) {
+    const isTimeout = proc.error.message.includes('ETIMEDOUT') || proc.error.message.includes('timeout');
     return {
       ok: false,
       blocked: true,
-      blockedReason: 'External Babylon screenshot command failed. See stderr in diff artifact.',
+      blockedReason: isTimeout
+        ? `External screenshot runner timed out after ${RUNNER_TIMEOUT_MS / 1000}s. Check that the runner is installed and the render environment is available.`
+        : `External screenshot runner could not be started: ${proc.error.message}`,
       stderr: proc.stderr?.trim(),
+      stdout: proc.stdout?.trim(),
+    };
+  }
+
+  if (proc.status !== 0) {
+    const stderr = proc.stderr?.trim() ?? '';
+    // Exit code 3 and stderr containing BLOCKED_ENV: are the runner's explicit
+    // blocked-environment signals.  Exit 1 is a render failure — the environment
+    // is present but rendering broke.  These must not be conflated: blocked means
+    // "no framebuffer was possible", failed means "framebuffer was possible but failed."
+    const isBlockedEnv = proc.status === 3 || stderr.includes('BLOCKED_ENV:');
+    const blockedLine = isBlockedEnv
+      ? (stderr.split('\n').find(l => l.includes('BLOCKED_ENV:')) ?? stderr)
+      : null;
+    return {
+      ok: false,
+      blocked: isBlockedEnv,
+      blockedReason: isBlockedEnv
+        ? `External runner reported blocked environment (exit ${proc.status}): ${blockedLine}`
+        : `External Babylon screenshot command failed (exit ${proc.status}). See stderr in diff artifact.`,
+      stderr,
       stdout: proc.stdout?.trim(),
     };
   }
@@ -232,9 +271,10 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
   if (!fs.existsSync(outputPath)) {
     return {
       ok: false,
-      blocked: true,
+      blocked: false,
       blockedReason: 'External Babylon screenshot command completed without producing the expected output file.',
       stdout: proc.stdout?.trim(),
+      stderr: proc.stderr?.trim(),
     };
   }
 
@@ -243,7 +283,7 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
     try {
       metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf-8'));
     } catch {
-      // keep metadata undefined; this is validated downstream as a reason.
+      // keep metadata undefined; validated downstream as a reason.
     }
   }
 

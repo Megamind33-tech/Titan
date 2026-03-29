@@ -1,0 +1,18 @@
+{
+  "name": "@titan/babylon-screenshot-runner",
+  "version": "1.0.0",
+  "description": "External Babylon.js screenshot runner for SWIM26 screenshot regression testing. Invoked via SWIM26_REAL_SCREENSHOT_CMD.",
+  "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test": "node runner.test.js",
+    "install-check": "node -e \"require('./runner.js')\" 2>&1 || true"
+  },
+  "dependencies": {
+    "babylonjs": "^7.48.0",
+    "babylonjs-loaders": "^7.48.0",
+    "puppeteer": "^24.0.0"
+  }
+}
