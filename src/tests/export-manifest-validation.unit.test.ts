@@ -3,6 +3,15 @@ import assert from 'node:assert/strict';
 import {
   validateTransform,
   validateMaterialProperties,
+  validateMaterialMaps,
+  validateMaterialUVTransform,
+  validatePrefabExport,
+  validatePathExport,
+  validateCollisionZoneExport,
+  validateTerrainExport,
+  validateCameraPresetExport,
+  validateCameraPathExport,
+  validateQualitySettingsExport,
   validateExportAsset,
   validateLighting,
   validateExportManifest,
@@ -843,5 +852,357 @@ test('preflightValidation rejects model without transform components', () => {
       },
     ]),
     /missing transform/
+  );
+});
+
+// ─── Phase 3: Extended Systems Tests ───────────────────────────────────────
+
+test('validateMaterialMaps accepts valid texture maps', () => {
+  const maps = {
+    normalMap: 'textures/normal.png',
+    roughnessMap: 'textures/rough.png',
+    metalnessMap: 'textures/metal.png',
+    emissiveMap: 'textures/emissive.png',
+    alphaMap: 'textures/alpha.png',
+  };
+  const result = validateMaterialMaps(maps, 'test');
+  assert.ok(result.normalMap);
+  assert.ok(result.roughnessMap);
+});
+
+test('validateMaterialMaps rejects non-string maps', () => {
+  assert.throws(
+    () => validateMaterialMaps({
+      normalMap: 123,
+    }, 'test'),
+    /normalMap.*string or null/
+  );
+});
+
+test('validateMaterialUVTransform validates tiling and offset', () => {
+  const uv = {
+    tiling: [2, 3],
+    offset: [0.5, 0.5],
+    rotation: 0,
+  };
+  const result = validateMaterialUVTransform(uv, 'test');
+  assert.deepEqual(result.tiling, [2, 3]);
+});
+
+test('validateMaterialUVTransform rejects negative tiling', () => {
+  assert.throws(
+    () => validateMaterialUVTransform({
+      tiling: [-1, 1],
+      offset: [0, 0],
+      rotation: 0,
+    }, 'test'),
+    /tiling.*positive/
+  );
+});
+
+test('validatePrefabExport validates prefab structure', () => {
+  const prefab = {
+    id: 'prefab-1',
+    name: 'Prefab 1',
+    modelIds: ['model-1', 'model-2'],
+  };
+  const result = validatePrefabExport(prefab, 'test');
+  assert.equal(result.id, 'prefab-1');
+  assert.equal(result.modelIds.length, 2);
+});
+
+test('validatePathExport validates path structure', () => {
+  const path = {
+    id: 'path-1',
+    name: 'Path 1',
+    type: 'walkway',
+    closed: false,
+    width: 2,
+    points: [
+      { id: 'pt1', position: [0, 0, 0] },
+      { id: 'pt2', position: [1, 0, 0] },
+    ],
+  };
+  const result = validatePathExport(path, 'test');
+  assert.equal(result.id, 'path-1');
+  assert.equal(result.points.length, 2);
+});
+
+test('validatePathExport rejects invalid path type', () => {
+  assert.throws(
+    () => validatePathExport({
+      id: 'path-1',
+      name: 'Path',
+      type: 'invalid',
+      closed: false,
+      width: 2,
+      points: [],
+    }, 'test'),
+    /path type/
+  );
+});
+
+test('validateCollisionZoneExport validates zone structure', () => {
+  const zone = {
+    id: 'zone-1',
+    name: 'Zone 1',
+    type: 'ground_surface',
+    enabled: true,
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    scale: [5, 1, 5],
+    shape: 'box',
+    allowedTags: [],
+    blockedTags: [],
+  };
+  const result = validateCollisionZoneExport(zone, 'test');
+  assert.equal(result.id, 'zone-1');
+});
+
+test('validateTerrainExport accepts optional terrain', () => {
+  const terrain = {
+    size: 100,
+    resolution: 10,
+  };
+  const result = validateTerrainExport(terrain, 'test');
+  assert.equal(result.size, 100);
+});
+
+test('validateCameraPresetExport validates camera presets', () => {
+  const preset = {
+    id: 'cam-1',
+    name: 'Camera 1',
+    type: 'perspective',
+    position: [0, 10, 10],
+    rotation: [0, 0, 0],
+    target: [0, 0, 0],
+    fov: 75,
+    near: 0.1,
+    far: 1000,
+  };
+  const result = validateCameraPresetExport(preset, 'test');
+  assert.equal(result.fov, 75);
+});
+
+test('validateCameraPathExport validates camera animation paths', () => {
+  const path = {
+    id: 'cam-path-1',
+    name: 'Camera Path',
+    points: [
+      { id: 'kf1', position: [0, 10, 10], target: [0, 0, 0], duration: 0, fov: 75 },
+      { id: 'kf2', position: [10, 10, 0], target: [5, 0, 0], duration: 2, fov: 60 },
+    ],
+    interpolation: 'smooth',
+  };
+  const result = validateCameraPathExport(path, 'test');
+  assert.equal(result.points.length, 2);
+});
+
+test('validateQualitySettingsExport validates quality options', () => {
+  const quality = {
+    shadowMapSize: 2048,
+    materialQuality: 'high',
+    textureQuality: 'high',
+    maxLights: 32,
+  };
+  const result = validateQualitySettingsExport(quality, 'test');
+  assert.equal(result.shadowMapSize, 2048);
+});
+
+test('validateExportAsset includes behavior tags and classification', () => {
+  const asset = {
+    id: 'asset-1',
+    name: 'Asset',
+    type: 'model',
+    visible: true,
+    locked: false,
+    behaviorTags: ['Decorative', 'Clickable'],
+    classification: 'indoor',
+    transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    material: {
+      wireframe: false,
+      lightIntensity: 1,
+      castShadow: true,
+      receiveShadow: true,
+      color: '#ffffff',
+      opacity: 1.0,
+      roughness: 0.5,
+      metalness: 0.0,
+      emissiveColor: '#000000',
+    },
+    version: 1,
+  };
+  const result = validateExportAsset(asset, 'test');
+  assert.deepEqual(result.behaviorTags, ['Decorative', 'Clickable']);
+  assert.equal(result.classification, 'indoor');
+});
+
+test('validateExportAsset includes children IDs for hierarchy', () => {
+  const asset = {
+    id: 'parent-1',
+    name: 'Parent',
+    type: 'model',
+    visible: true,
+    locked: false,
+    childrenIds: ['child-1', 'child-2'],
+    transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    material: {
+      wireframe: false,
+      lightIntensity: 1,
+      castShadow: true,
+      receiveShadow: true,
+      color: '#ffffff',
+      opacity: 1.0,
+      roughness: 0.5,
+      metalness: 0.0,
+      emissiveColor: '#000000',
+    },
+    version: 1,
+  };
+  const result = validateExportAsset(asset, 'test');
+  assert.deepEqual(result.childrenIds, ['child-1', 'child-2']);
+});
+
+test('validateExportManifest validates prefabs with model references', () => {
+  const manifest = {
+    version: '2.0.0',
+    exportDate: new Date().toISOString(),
+    scene: {
+      lighting: {
+        ambient: 0.3,
+        hemisphere: { intensity: 0.6, color: '#ffffff', groundColor: '#2a2b2e' },
+        directional: { intensity: 1.5, position: [50, 50, 25] },
+        shadowSoftness: 1,
+        exposure: 1.0,
+        toneMapping: 'ACESFilmic',
+      },
+      gridReceiveShadow: true,
+    },
+    assets: [
+      {
+        id: 'model-1',
+        name: 'Model',
+        type: 'model',
+        visible: true,
+        locked: false,
+        transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        material: {
+          wireframe: false,
+          lightIntensity: 1,
+          castShadow: true,
+          receiveShadow: true,
+          color: '#ffffff',
+          opacity: 1.0,
+          roughness: 0.5,
+          metalness: 0.0,
+          emissiveColor: '#000000',
+        },
+        version: 1,
+      },
+    ],
+    prefabs: [
+      {
+        id: 'prefab-1',
+        name: 'Prefab',
+        modelIds: ['model-1'],
+      },
+    ],
+  };
+  const result = validateExportManifest(manifest as any);
+  assert.ok(result.prefabs);
+  assert.equal(result.prefabs.length, 1);
+});
+
+test('validateExportManifest detects missing prefab model references', () => {
+  assert.throws(
+    () => validateExportManifest({
+      version: '2.0.0',
+      exportDate: new Date().toISOString(),
+      scene: {
+        lighting: {
+          ambient: 0.3,
+          hemisphere: { intensity: 0.6, color: '#ffffff', groundColor: '#2a2b2e' },
+          directional: { intensity: 1.5, position: [50, 50, 25] },
+          shadowSoftness: 1,
+          exposure: 1.0,
+          toneMapping: 'ACESFilmic',
+        },
+        gridReceiveShadow: true,
+      },
+      assets: [
+        {
+          id: 'model-1',
+          name: 'Model',
+          type: 'model',
+          visible: true,
+          locked: false,
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          material: {
+            wireframe: false,
+            lightIntensity: 1,
+            castShadow: true,
+            receiveShadow: true,
+            color: '#ffffff',
+            opacity: 1.0,
+            roughness: 0.5,
+            metalness: 0.0,
+            emissiveColor: '#000000',
+          },
+          version: 1,
+        },
+      ],
+      prefabs: [
+        {
+          id: 'prefab-1',
+          name: 'Prefab',
+          modelIds: ['non-existent-model'],
+        },
+      ],
+    } as any),
+    /references non-existent model/
+  );
+});
+
+test('validateExportManifest validates child reference consistency', () => {
+  assert.throws(
+    () => validateExportManifest({
+      version: '2.0.0',
+      exportDate: new Date().toISOString(),
+      scene: {
+        lighting: {
+          ambient: 0.3,
+          hemisphere: { intensity: 0.6, color: '#ffffff', groundColor: '#2a2b2e' },
+          directional: { intensity: 1.5, position: [50, 50, 25] },
+          shadowSoftness: 1,
+          exposure: 1.0,
+          toneMapping: 'ACESFilmic',
+        },
+        gridReceiveShadow: true,
+      },
+      assets: [
+        {
+          id: 'parent-1',
+          name: 'Parent',
+          type: 'model',
+          visible: true,
+          locked: false,
+          childrenIds: ['non-existent-child'],
+          transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          material: {
+            wireframe: false,
+            lightIntensity: 1,
+            castShadow: true,
+            receiveShadow: true,
+            color: '#ffffff',
+            opacity: 1.0,
+            roughness: 0.5,
+            metalness: 0.0,
+            emissiveColor: '#000000',
+          },
+          version: 1,
+        },
+      ],
+    } as any),
+    /references non-existent child/
   );
 });
