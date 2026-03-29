@@ -10,7 +10,7 @@
  * - Validation failures throw with descriptive errors, never silently pass
  */
 
-import { CameraSettings } from './storageUtils';
+import { CameraSettings } from '../utils/storageUtils';
 import { Layer } from '../types/layers';
 
 // ─── Validation Helpers ───────────────────────────────────────────────────

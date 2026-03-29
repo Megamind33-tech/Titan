@@ -6,60 +6,26 @@ import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { ModelData } from '../App';
 import { SceneSettings, CameraSettings } from './storageUtils';
 import { Layer } from '../types/layers';
+import {
+  preflightValidation,
+  validateExportManifest,
+  StrictExportAssetManifest,
+  StrictSceneExportManifest,
+  StrictMaterialProperties,
+} from '../services/ExportManifestValidation';
 
-export interface ExportAssetManifest {
-  id: string;
-  name: string;
-  type: string;
-  layerId?: string;
-  visible: boolean;
-  locked: boolean;
-  file?: string;
-  transform: {
-    position: [number, number, number];
-    rotation: [number, number, number];
-    scale: [number, number, number];
-  };
-  material: {
-    wireframe: boolean;
-    lightIntensity: number;
-    castShadow: boolean;
-    receiveShadow: boolean;
-    texture?: string | null;
-    presetId?: string;
-    presetName?: string;
-    color?: string;
-    opacity?: number;
-    roughness?: number;
-    metalness?: number;
-    emissiveColor?: string;
-  };
-  metadata?: Record<string, any>;
-  parent?: string | null;
-  version: number;
+/**
+ * @deprecated Use StrictExportAssetManifest from ExportManifestValidation instead
+ * Kept for backwards compatibility during migration
+ */
+export interface ExportAssetManifest extends StrictExportAssetManifest {
 }
 
-export interface SceneExportManifest {
-  version: string;
-  exportDate: string;
-  scene: {
-    lighting: {
-      ambient: number;
-      hemisphere: { intensity: number; color: string; groundColor: string };
-      directional: { intensity: number; position: [number, number, number] };
-      shadowSoftness: number;
-      presetId?: string;
-      presetName?: string;
-      environmentPreset?: string;
-      exposure?: number;
-      toneMapping?: string;
-    };
-    gridReceiveShadow: boolean;
-    camera?: CameraSettings;
-    layers?: Layer[];
-  };
-  assets: ExportAssetManifest[];
-  exportSensitiveModels?: string[];
+/**
+ * @deprecated Use StrictSceneExportManifest from ExportManifestValidation instead
+ * Kept for backwards compatibility during migration
+ */
+export interface SceneExportManifest extends StrictSceneExportManifest {
 }
 
 export interface ExportOptions {
@@ -71,166 +37,193 @@ export interface ExportOptions {
   layers?: Layer[];
 }
 
+/**
+ * Export scene to ZIP file with strict manifest validation.
+ *
+ * VALIDATION FLOW:
+ * 1. Preflight: Validates all selected models can be exported
+ * 2. Build: Creates manifest structure with proper defaults
+ * 3. Validate: Full manifest validation before export
+ * 4. Export: Writes files and manifest to ZIP
+ *
+ * @throws If any validation fails, export is abandoned (no partial exports)
+ */
 export const exportScene = async (
   models: ModelData[],
   sceneSettings: SceneSettings,
   threeScene: THREE.Scene | null,
   options: ExportOptions
 ): Promise<void> => {
-  const zip = new JSZip();
+  try {
+    // ─── PHASE 1: PREFLIGHT VALIDATION ───────────────────────────────────
+    const modelsToExport = models.filter(m => options.selectedIds.includes(m.id));
+    preflightValidation(modelsToExport);
 
-  const manifest: SceneExportManifest = {
-    version: "1.0.0",
-    exportDate: new Date().toISOString(),
-    scene: {
-      lighting: {
-        ambient: sceneSettings.environment.ambientIntensity,
-        hemisphere: {
-          intensity: sceneSettings.environment.hemisphereIntensity,
-          color: sceneSettings.environment.hemisphereColor,
-          groundColor: sceneSettings.environment.hemisphereGroundColor
-        },
-        directional: {
-          intensity: sceneSettings.environment.directionalIntensity,
-          position: sceneSettings.environment.directionalPosition
-        },
-        shadowSoftness: sceneSettings.shadowSoftness,
-        presetId: sceneSettings.environment.id,
-        presetName: sceneSettings.environment.name,
-        environmentPreset: sceneSettings.environment.environmentPreset,
-        exposure: sceneSettings.environment.exposure,
-        toneMapping: sceneSettings.environment.toneMapping
-      },
-      gridReceiveShadow: sceneSettings.gridReceiveShadow,
-      camera: options.cameraSettings,
-      layers: options.layers
-    },
-    assets: [] as any[]
-  };
+    // ─── PHASE 2: BUILD MANIFEST ─────────────────────────────────────────
+    const zip = new JSZip();
+    const modelsFolder = zip.folder("models");
+    const texturesFolder = zip.folder("textures");
 
-  const modelsFolder = zip.folder("models");
-  const texturesFolder = zip.folder("textures");
+    // Build assets array with proper material defaults
+    const assets: StrictExportAssetManifest[] = [];
 
-  const modelsToExport = models.filter(m => options.selectedIds.includes(m.id));
+    for (const model of modelsToExport) {
+      let modelFilePath = "";
+      let textureFilePath = "";
 
-  const exportSensitiveModels = modelsToExport.filter(m => (m.behaviorTags || []).includes('Export-Sensitive'));
-  if (exportSensitiveModels.length > 0) {
-    console.warn(`Exporting ${exportSensitiveModels.length} export-sensitive models. Special handling may be required.`);
-    manifest.exportSensitiveModels = exportSensitiveModels.map(m => m.id);
-  }
-
-  for (const model of modelsToExport) {
-    let modelFilePath = "";
-    let textureFilePath = "";
-
-    // Save texture file if included
-    if (options.includeTextures && model.textureFile && texturesFolder) {
-      const extension = model.textureFile.name.split('.').pop();
-      const filename = `${model.id}_texture.${extension}`;
-      texturesFolder.file(filename, model.textureFile);
-      textureFilePath = `textures/${filename}`;
-    }
-
-    if (options.format === 'original') {
-      // Save original model file
-      if (model.file && modelsFolder) {
-        const extension = model.file.name.split('.').pop();
-        const filename = `${model.id}_${model.name}`;
-        modelsFolder.file(filename, model.file);
-        modelFilePath = `models/${filename}`;
+      // Save texture file if included
+      if (options.includeTextures && model.textureFile && texturesFolder) {
+        const extension = model.textureFile.name.split('.').pop();
+        const filename = `${model.id}_texture.${extension}`;
+        texturesFolder.file(filename, model.textureFile);
+        textureFilePath = `textures/${filename}`;
       }
-    } else if (threeScene && modelsFolder) {
-      // Find the object in the Three.js scene
-      let targetObject: THREE.Object3D | undefined;
-      threeScene.traverse((child) => {
-        if (child.userData && child.userData.id === model.id) {
-          targetObject = child;
-        }
-      });
 
-      if (targetObject) {
-        // Clone to apply export-specific material/texture settings without affecting the live scene
-        const clone = targetObject.clone();
-        
-        clone.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            if (!options.includeMaterials) {
-              if (Array.isArray(child.material)) {
-                child.material = child.material.map(() => new THREE.MeshBasicMaterial());
-              } else {
-                child.material = new THREE.MeshBasicMaterial();
-              }
-            } else if (!options.includeTextures) {
-              if (Array.isArray(child.material)) {
-                child.material.forEach(m => { if (m.map) m.map = null; });
-              } else {
-                if (child.material.map) child.material.map = null;
-              }
-            }
+      // Export geometry based on format
+      if (options.format === 'original') {
+        if (model.file && modelsFolder) {
+          const extension = model.file.name.split('.').pop();
+          const filename = `${model.id}_${model.name}`;
+          modelsFolder.file(filename, model.file);
+          modelFilePath = `models/${filename}`;
+        }
+      } else if (threeScene && modelsFolder) {
+        let targetObject: THREE.Object3D | undefined;
+        threeScene.traverse((child) => {
+          if (child.userData && child.userData.id === model.id) {
+            targetObject = child;
           }
         });
 
-        if (options.format === 'glb') {
-          const exporter = new GLTFExporter();
-          const gltfData = await new Promise<any>((resolve, reject) => {
-            exporter.parse(clone, resolve, reject, { binary: true });
+        if (targetObject) {
+          const clone = targetObject.clone();
+          clone.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              if (!options.includeMaterials) {
+                if (Array.isArray(child.material)) {
+                  child.material = child.material.map(() => new THREE.MeshBasicMaterial());
+                } else {
+                  child.material = new THREE.MeshBasicMaterial();
+                }
+              } else if (!options.includeTextures) {
+                if (Array.isArray(child.material)) {
+                  child.material.forEach(m => { if (m.map) m.map = null; });
+                } else {
+                  if (child.material.map) child.material.map = null;
+                }
+              }
+            }
           });
-          const filename = `${model.id}_${model.name.split('.')[0]}.glb`;
-          modelsFolder.file(filename, gltfData);
-          modelFilePath = `models/${filename}`;
-        } else if (options.format === 'obj') {
-          const exporter = new OBJExporter();
-          const objData = exporter.parse(clone);
-          const filename = `${model.id}_${model.name.split('.')[0]}.obj`;
-          modelsFolder.file(filename, objData);
-          modelFilePath = `models/${filename}`;
+
+          if (options.format === 'glb') {
+            const exporter = new GLTFExporter();
+            const gltfData = await new Promise<any>((resolve, reject) => {
+              exporter.parse(clone, resolve, reject, { binary: true });
+            });
+            const filename = `${model.id}_${model.name.split('.')[0]}.glb`;
+            modelsFolder.file(filename, gltfData);
+            modelFilePath = `models/${filename}`;
+          } else if (options.format === 'obj') {
+            const exporter = new OBJExporter();
+            const objData = exporter.parse(clone);
+            const filename = `${model.id}_${model.name.split('.')[0]}.obj`;
+            modelsFolder.file(filename, objData);
+            modelFilePath = `models/${filename}`;
+          }
         }
       }
+
+      // Build material properties with all required fields
+      const material: StrictMaterialProperties = {
+        wireframe: model.wireframe ?? false,
+        lightIntensity: model.lightIntensity ?? 1,
+        castShadow: model.castShadow ?? true,
+        receiveShadow: model.receiveShadow ?? true,
+        color: model.material?.color ?? model.colorTint ?? '#ffffff',
+        opacity: model.material?.opacity ?? model.opacity ?? 1.0,
+        roughness: model.material?.roughness ?? model.roughness ?? 0.5,
+        metalness: model.material?.metalness ?? model.metalness ?? 0,
+        emissiveColor: model.material?.emissiveColor ?? model.emissiveColor ?? '#000000',
+        texture: textureFilePath || null,
+        presetId: model.material?.id,
+        presetName: model.material?.name,
+      };
+
+      // Add asset to manifest
+      assets.push({
+        id: model.id,
+        name: model.name,
+        type: (model.type || 'model') as 'model' | 'environment' | 'light' | 'camera',
+        layerId: model.layerId,
+        visible: model.visible ?? true,
+        locked: model.locked ?? false,
+        file: modelFilePath || undefined,
+        transform: {
+          position: model.position,
+          rotation: model.rotation,
+          scale: model.scale,
+        },
+        material,
+        metadata: {},
+        parent: model.parentId || null,
+        version: 2,
+      });
     }
 
-    manifest.assets.push({
-      id: model.id,
-      name: model.name,
-      type: model.type || 'model',
-      layerId: model.layerId,
-      visible: model.visible,
-      locked: model.locked,
-      file: modelFilePath,
-      transform: {
-        position: model.position,
-        rotation: model.rotation,
-        scale: model.scale
+    // Identify export-sensitive models
+    const exportSensitiveModelIds = modelsToExport
+      .filter(m => (m.behaviorTags || []).includes('Export-Sensitive'))
+      .map(m => m.id);
+
+    // Build complete manifest
+    const manifest: StrictSceneExportManifest = {
+      version: '2.0.0',
+      exportDate: new Date().toISOString(),
+      scene: {
+        lighting: {
+          ambient: sceneSettings.environment.ambientIntensity,
+          hemisphere: {
+            intensity: sceneSettings.environment.hemisphereIntensity,
+            color: sceneSettings.environment.hemisphereColor,
+            groundColor: sceneSettings.environment.hemisphereGroundColor,
+          },
+          directional: {
+            intensity: sceneSettings.environment.directionalIntensity,
+            position: sceneSettings.environment.directionalPosition,
+          },
+          shadowSoftness: sceneSettings.shadowSoftness,
+          presetId: sceneSettings.environment.id,
+          presetName: sceneSettings.environment.name,
+          environmentPreset: sceneSettings.environment.environmentPreset,
+          exposure: sceneSettings.environment.exposure,
+          toneMapping: sceneSettings.environment.toneMapping as 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACESFilmic',
+        },
+        gridReceiveShadow: sceneSettings.gridReceiveShadow,
+        camera: options.cameraSettings,
+        layers: options.layers,
       },
-      material: {
-        wireframe: model.wireframe,
-        lightIntensity: model.lightIntensity,
-        castShadow: model.castShadow,
-        receiveShadow: model.receiveShadow,
-        texture: textureFilePath || null,
-        ...(model.material ? {
-          presetId: model.material.id,
-          presetName: model.material.name,
-          color: model.material.color,
-          opacity: model.material.opacity,
-          roughness: model.material.roughness,
-          metalness: model.material.metalness,
-          emissiveColor: model.material.emissiveColor
-        } : {
-          color: model.colorTint,
-          opacity: model.opacity,
-          roughness: model.roughness,
-          metalness: model.metalness,
-          emissiveColor: model.emissiveColor
-        })
-      },
-      metadata: {},  // TODO: Extend ModelData with metadata field if needed
-      parent: null,
-      version: 1
-    });
+      assets,
+      exportSensitiveModels: exportSensitiveModelIds.length > 0 ? exportSensitiveModelIds : undefined,
+    };
+
+    // ─── PHASE 3: VALIDATE MANIFEST ──────────────────────────────────────
+    const validatedManifest = validateExportManifest(manifest);
+
+    if (exportSensitiveModelIds.length > 0) {
+      console.warn(
+        `Exporting ${exportSensitiveModelIds.length} export-sensitive models. ` +
+        `Special handling may be required by downstream consumer.`
+      );
+    }
+
+    // ─── PHASE 4: WRITE TO ZIP ───────────────────────────────────────────
+    zip.file("scene-manifest.json", JSON.stringify(validatedManifest, null, 2));
+    const content = await zip.generateAsync({ type: "blob" });
+    saveAs(content, "scene-export.zip");
+
+  } catch (error) {
+    // Export validation failed - abort completely, no partial export
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Export validation failed: ${message}`);
   }
-
-  zip.file("scene-manifest.json", JSON.stringify(manifest, null, 2));
-
-  const content = await zip.generateAsync({ type: "blob" });
-  saveAs(content, "scene-export.zip");
 };
