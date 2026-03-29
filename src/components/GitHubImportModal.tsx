@@ -197,7 +197,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   )}
                 </div>
                 <p className="mt-2 text-xs text-gray-500">
-                  Public repositories import directly. For private repositories, add a read-only token below.
+                  Public repositories import directly. If the repo is private, add a read-only token below.
                 </p>
               </div>
 
@@ -247,7 +247,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
               {/* Error Display */}
               {error && (
                 <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm font-medium text-red-900">Error</p>
+                  <p className="text-sm font-medium text-red-900">Couldn’t start import</p>
                   <p className="text-sm text-red-700 mt-1">{error}</p>
                 </div>
               )}
@@ -289,11 +289,11 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
           {confirmationMode && detectionPreview && !result && (
             <div className="space-y-4">
               <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm font-medium text-blue-900">Repository Detected</p>
+                <p className="text-sm font-medium text-blue-900">Repository checked</p>
                 <p className="text-sm text-blue-700 mt-1">
                   {detectionPreview.detection?.isSWIM26
-                    ? '✓ This looks like a SWIM26 Babylon project.'
-                    : 'This repository will be imported as a standard Titan scene.'}
+                    ? 'This looks like a SWIM26 Babylon project and is ready to import.'
+                    : 'This repo can be imported as a standard Titan scene.'}
                 </p>
               </div>
 
@@ -301,9 +301,9 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
               <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
                 <p className="text-sm font-medium text-gray-700 mb-2">What Titan imports</p>
                 <ul className="text-xs text-gray-600 space-y-1">
-                  <li>✓ Project metadata and supported manifest/config files</li>
+                  <li>✓ Project metadata plus supported manifest/config files</li>
                   <li>✓ Scene objects, asset references, environment, and camera/path data</li>
-                  <li className="text-red-600">✗ Runtime code (gameplay scripts, boot code, networking)</li>
+                  <li className="text-red-600">✗ Runtime/gameplay code (scripts, boot code, networking)</li>
                   <li className="text-red-600">✗ Source files outside Titan’s builder scope</li>
                 </ul>
               </div>
@@ -376,7 +376,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   <p className="text-sm font-medium text-red-900">Import failed</p>
                   <p className="text-sm text-red-700 mt-1">{error}</p>
                   <p className="text-xs text-red-700 mt-2">
-                    Next step: go back, paste a fresh read-only token, then retry.
+                    Next step: go back, update branch/path or paste a fresh read-only token, then retry.
                   </p>
                 </div>
               )}
@@ -387,9 +387,9 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
           {result && (
             <div className="space-y-4">
               <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-lg font-semibold text-green-900">✓ Import Successful!</p>
+                <p className="text-lg font-semibold text-green-900">✓ Import complete</p>
                 <p className="text-sm text-green-700 mt-2">
-                  Imported from {result.sourceRepo}
+                  Connected to {result.sourceRepo}
                 </p>
               </div>
 

@@ -72,22 +72,22 @@ const scrubSecrets = (raw: string): string => raw.replace(/gh[pousr]_[A-Za-z0-9_
 const toFriendlyImportError = (raw: string): string => {
   const sanitized = scrubSecrets(raw);
   if (sanitized.startsWith('PRIVATE_REPO_AUTH_REQUIRED:')) {
-    return 'This repo looks private. Add a read-only GitHub token, then try again.';
+    return 'This repository appears private. Add a read-only GitHub token and try again.';
   }
   if (sanitized.startsWith('INVALID_TOKEN:')) {
-    return 'GitHub rejected that token. Check it and try again.';
+    return 'GitHub rejected that token. Check it, then try again.';
   }
   if (sanitized.startsWith('SSO_AUTH_REQUIRED:')) {
     return 'This organization requires SSO for this token. Authorize it in GitHub, then retry.';
   }
   if (sanitized.startsWith('INSUFFICIENT_SCOPE:')) {
-    return 'Your token does not have required repository read permission for this repo.';
+    return 'Your token is missing repository read permission for this repository.';
   }
   if (sanitized.startsWith('RATE_LIMITED:')) {
     return 'GitHub rate limit reached. Wait and retry, or use an authorized token.';
   }
   if (sanitized.startsWith('REPO_NOT_FOUND:')) {
-    return 'Repository not found. Check owner/repo and branch, or provide a token if this repository is private.';
+    return 'Repository not found. Check owner/repo and branch, or provide a token if it is private.';
   }
   return sanitized;
 };
@@ -261,9 +261,9 @@ export const getPhaseMessage = (phase: ImportPhase, customMessage?: string): str
   const messages: Record<ImportPhase, string> = {
     idle: 'Ready to import',
     validating: 'Validating repository...',
-    detecting: 'Checking project type...',
+    detecting: 'Checking repository structure...',
     loading: 'Importing from GitHub...',
-    'creating-session': 'Setting up project...',
+    'creating-session': 'Setting up your project...',
     complete: 'Import complete.',
     error: 'Import failed',
   };

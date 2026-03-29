@@ -1,130 +1,122 @@
-# TypeScript Debt Baseline & Cleanup Report (Phase: Core Safety Pass)
+# TypeScript Debt Baseline Report (Core Safety Baseline Refresh)
 
 Date: 2026-03-29
 
-## 1) Baseline capture (before fixes)
+## 1) Captured repo-wide baseline
 
-Repo-wide command:
+Command:
 
 - `npm run lint -- --pretty false`
 
-Initial result:
+Result:
 
-- **1 TypeScript compiler error**
-- Error: missing declaration for `react-dom/client` in `src/main.tsx`.
+- **0 TypeScript compiler errors** (`tsc --noEmit` clean).
 
-Raw baseline error:
-
-```text
-src/main.tsx(2,26): error TS7016: Could not find a declaration file for module 'react-dom/client'.
-```
+This means current debt is predominantly **structural typing weakness** (not hard compiler blockers).
 
 ---
 
 ## 2) Subsystem classification snapshot
 
-I grouped both hard compiler failures and structural weak-typing hotspots.
+Pattern metric used for classification:
 
-### Hard compiler failures (blocking)
+- `rg -n "\\bany\\b|as any|<any>" ...`
 
-- **App shell bootstrap**: missing module declaration for ReactDOM client import.
+### Baseline (before this cleanup pass)
 
-### Structural debt hotspots (`any`/weak contract density)
+- project/session/import/activation: **1**
+- export/import/persistence: **82**
+- SWIM26 runtime/sync: **24**
+- screenshot/tooling: **0**
+- UI/hooks/coordinators: **36**
 
-- **project/session/import/activation**: 4
-- **export/import/persistence**: 138
-- **SWIM26 runtime/sync**: 24
-- **screenshot/tooling**: 0
-- **UI/hooks/coordinators**: 38
+### After this cleanup pass
 
-These counts are pattern-density indicators (not compiler errors) used to prioritize cleanup.
+- project/session/import/activation: **1** (no change)
+- export/import/persistence: **62** (↓20)
+- SWIM26 runtime/sync: **5** (↓19)
+- screenshot/tooling: **0** (no change)
+- UI/hooks/coordinators: **36** (no change)
 
 ---
 
-## 3) High-risk cleanup completed in this pass
+## 3) High-risk areas cleaned in this pass
 
-Priority order used for implemented cleanup:
+### project/session/import/activation
 
-1. project/session/import/activation
-2. high-value UI/hooks/coordinators
-3. shared GitHub response guards (import path safety)
+- Preserved prior pass improvements:
+  - typed imported-scene handoff payloads in `useGitHubProjectImport`
+  - typed active-project summary contract
+  - typed scene subscriber snapshot.
 
-### Implemented
+### export/import/persistence (focus of this pass)
 
-- Added local declaration for `react-dom/client` to remove repo-wide TS blocking failure.
-- Replaced weak `any` contracts in GitHub import flow:
-  - `ImportPreparationResult.guidance` now strongly typed via `ReturnType<typeof getProjectSelectionGuidance>`.
-  - `useGitHubImport.prepareImport` now returns `Promise<ImportPreparationResult | null>` instead of `Promise<any>`.
-  - `GitHubImportModal` preview/result callback typing tightened (`ImportPreparationResult`, `LoadedSceneData`).
-- Improved shared GitHub API response guards to reduce unsafe `any` parsing:
-  - strict payload narrowing for repo metadata and directory listing responses.
-  - explicit error path for malformed API shapes.
+- Introduced explicit structural contracts in `ExportPreflightValidation`:
+  - `ExportModelLike`, `LayerLike`, `PrefabLike`, `PathLike`, `CollisionZoneLike`, `CameraPresetLike`, `ThreeSceneLike`
+  - replaced repeated `any` signatures/collections and callback types
+  - tightened scene traversal typing and selected-model filtering.
+
+### SWIM26 runtime/sync
+
+- Tightened `Swim26ManifestLoader` contracts by replacing broad `any` parsing and extraction types with:
+  - `UnknownRecord`, `ManifestObject`, and typed extract/load return contracts
+  - safer manifest-type narrowing and safer nested access (`safeGet` on `unknown`)
+  - typed `LoadedSceneData` shapes (`environment` as unknown, typed transform payload).
 
 ---
 
 ## 4) Repeated weak patterns reduced
 
-- Reduced `any` in import orchestration contracts.
-- Replaced unchecked JSON cast patterns in GitHub connector with shape guards.
-- Removed modal-level `any` state for import preview data.
+- Reduced repeated `any[]` state-transfer patterns in import completion.
+- Replaced weak export preflight contracts with shared typed “*Like” interfaces.
+- Removed broad `any` usage in export preflight traversal and validation signatures.
+- Replaced broad SWIM26 manifest parsing `any` with safer unknown + narrowed contracts.
 
 ---
 
-## 5) Shared guard/type improvements
-
-- Added reusable object/payload guards in `GitHubConnector`:
-  - `isObjectRecord`
-  - `isGitHubRepoApiPayload`
-  - `isGitHubDirectoryEntryPayload`
-
-These centralize GitHub response validation and prevent unsafe structural assumptions.
-
----
-
-## 6) Before/after debt report
+## 5) Before/after debt report
 
 ### Compiler baseline
 
-- Before: **1 error**
+- Before: **0 errors**
 - After: **0 errors**
 
-### Structural debt
+### Structural debt delta (pattern counts)
 
-- Still present in export/import/persistence and some UI/hooks/runtime surfaces.
-- This pass focused on highest-risk import/activation safety and repo-wide compiler baseline.
+- Total across tracked subsystems:
+  - Before: **143**
+  - After: **104**
+  - Improvement: **-39 instances** in this pass.
 
 ---
 
-## 7) Remaining debt
+## 6) Remaining debt
 
 ### Deferred (explicit)
 
-- Large remaining `any` usage in:
-  - export/preflight/manifest validation services
-  - persistence repair/validation services
-  - plugin bridge scene typing surfaces
+- export/import/persistence surfaces still carry most `any` density (`ExportPreflightValidation`, persistence repair/validation pathways).
+- SWIM26 runtime/sync still has remaining weak areas in importer/sync edge handling outside manifest loader.
 
-### Must-fix next
+### Must-fix-next
 
-- Introduce stronger shared model/scene contracts for export/persistence pipeline.
-- Replace `any`-based plugin scene bridge contracts with typed patch/result envelopes.
-- Continue narrowing JSON parse sites (`unknown` + guards) in SWIM26 import/runtime services.
+1. Continue runtime/sync contract tightening in `Swim26ManifestImporter` and sync edge paths to match manifest loader strictness.
+2. Reduce `any` in export/persistence validators with shared typed issue/result envelopes.
+3. Continue replacing `as any` patch/update patterns in `App.tsx` prefab propagation path.
 
 ---
 
-## 8) Validation rerun
+## 7) Repo-wide validation rerun
 
-- `npm run lint -- --pretty false` → pass
-- workflow sanity runs (tests) passed after cleanup.
+- `npm run lint -- --pretty false` → pass.
 
 ---
 
-## 9) Workflow sanity-check coverage executed
+## 8) Workflow sanity-check result
 
-- GitHub import workflow tests
-- App shell workflow tests
-- Export workflow tests
-- SWIM26 round-trip tests
-- Screenshot runner contract tests
+Executed:
 
-All executed checks passed in this pass.
+- `npx tsx --test src/tests/export-preflight-validation.unit.test.ts src/tests/imported-scene-loader.unit.test.ts src/tests/app-shell-workflows.unit.test.ts src/tests/github-import-integration.test.ts`
+
+Result:
+
+- pass (core import/app-shell sanity checks remained stable after typing cleanup).
