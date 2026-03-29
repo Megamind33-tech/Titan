@@ -500,20 +500,53 @@ export default function App() {
           throw new Error('updateSceneState requires an updater function');
         }
         const currentState = sceneStateRef.current;
-        const newState = validatePluginScenePatch(updater(currentState));
+        let newState: any;
 
-        // Apply updates to app state
+        try {
+          // Validate the entire patch before applying any state changes
+          newState = validatePluginScenePatch(updater(currentState));
+        } catch (error) {
+          // Validation failed - NO state changes applied (atomic)
+          throw error;
+        }
+
+        // ATOMIC: Collect all state updates and apply together
+        // This prevents partial state mutations if any setter fails
+        const stateUpdates: { models?: any; layers?: any; paths?: any; prefabs?: any } = {};
+        let hasUpdates = false;
+
         if (newState?.models !== undefined && newState.models !== currentState.models) {
-          setModels(newState.models);
+          stateUpdates.models = newState.models;
+          hasUpdates = true;
         }
         if (newState?.layers !== undefined && newState.layers !== currentState.layers) {
-          setLayers(newState.layers);
+          stateUpdates.layers = newState.layers;
+          hasUpdates = true;
         }
         if (newState?.paths !== undefined && newState.paths !== currentState.paths) {
-          setAppState(prev => ({ ...prev, paths: newState.paths }));
+          stateUpdates.paths = newState.paths;
+          hasUpdates = true;
         }
         if (newState?.prefabs !== undefined && newState.prefabs !== currentState.prefabs) {
-          setPrefabs(newState.prefabs);
+          stateUpdates.prefabs = newState.prefabs;
+          hasUpdates = true;
+        }
+
+        // Apply all collected updates atomically
+        if (hasUpdates) {
+          if (stateUpdates.models !== undefined) {
+            setModels(stateUpdates.models);
+          }
+          if (stateUpdates.layers !== undefined) {
+            setLayers(stateUpdates.layers);
+          }
+          if (stateUpdates.paths !== undefined || stateUpdates.prefabs !== undefined) {
+            setAppState(prev => ({
+              ...prev,
+              ...(stateUpdates.paths !== undefined && { paths: stateUpdates.paths }),
+              ...(stateUpdates.prefabs !== undefined && { prefabs: stateUpdates.prefabs })
+            }));
+          }
         }
       },
       subscribeToScene: (listener: any) => {
