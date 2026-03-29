@@ -61,15 +61,15 @@ export default function ExportModal({ isOpen, onClose, models, onExport, allowed
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-[#151619] border border-white/10 rounded p-6 w-96 max-w-full shadow-2xl flex flex-col gap-6" data-testid="export-modal">
         <div className="flex items-center justify-between">
-          <h2 className="text-[12px] font-bold uppercase font-mono tracking-[0.2em] text-white/80">EXPORT OPTIONS</h2>
+          <h2 className="text-[12px] font-bold uppercase font-mono tracking-[0.2em] text-white/80">Export</h2>
           <button onClick={onClose} className="text-white/30 hover:text-white transition-colors text-[10px] font-mono">CLOSE_X</button>
         </div>
         
         <div className="space-y-3">
-          <h3 className="hardware-label">SELECT_MODELS_TO_EXPORT</h3>
+          <h3 className="hardware-label">Select models</h3>
           <div className="max-h-40 overflow-y-auto bg-black/40 p-2 rounded border border-white/5 no-scrollbar">
             {models.length === 0 ? (
-              <p className="text-[9px] text-white/20 uppercase font-mono tracking-widest italic text-center py-4">NO_MODELS_IN_SCENE</p>
+              <p className="text-[9px] text-white/20 uppercase font-mono tracking-widest italic text-center py-4">No models in the scene</p>
             ) : (
               models.map(model => (
                 <label key={model.id} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer group transition-colors">
@@ -88,7 +88,7 @@ export default function ExportModal({ isOpen, onClose, models, onExport, allowed
 
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="hardware-label">EXPORT_FORMAT</h3>
+            <h3 className="hardware-label">Export format</h3>
             {recommendedFormat && <span className="text-[9px] text-blue-300 font-mono uppercase" data-testid="recommended-export-format">Recommended: {recommendedFormat}</span>}
           </div>
           {contextNote && <p className="text-[10px] text-white/50">{contextNote}</p>}
@@ -105,13 +105,13 @@ export default function ExportModal({ isOpen, onClose, models, onExport, allowed
           </select>
           {isSwimManifest && (
             <p className="text-[10px] text-blue-200/80">
-              SWIM26 manifest export includes runtime handoff metadata and authored scene payload.
+              SWIM26 Manifest includes authored scene data plus runtime handoff metadata.
             </p>
           )}
         </div>
 
         <div className="space-y-3" aria-disabled={isSwimManifest}>
-          <h3 className="hardware-label">ASSET_OPTIONS</h3>
+          <h3 className="hardware-label">Asset options</h3>
           <div className="space-y-2">
             <label className="flex items-center gap-2 cursor-pointer group">
               <input 
@@ -148,7 +148,7 @@ export default function ExportModal({ isOpen, onClose, models, onExport, allowed
             disabled={selectedIds.length === 0}
             className="hardware-button px-4 py-2 bg-white/10 text-white border-white/20 disabled:opacity-20 disabled:cursor-not-allowed"
           >
-            GENERATE_EXPORT
+            EXPORT
           </button>
         </div>
       </div>

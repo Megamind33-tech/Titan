@@ -234,21 +234,39 @@ async function main() {
     // --disable-background-timer-throttling + --disable-renderer-backgrounding
     //   Prevents the Babylon render loop from being throttled when the page is
     //   considered "backgrounded" by the headless renderer.
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--use-gl=swiftshader',
-        '--disable-background-timer-throttling',
-        '--disable-renderer-backgrounding',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-ipc-flooding-protection',
-        `--window-size=${width},${height}`,
-      ],
-    });
+    try {
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--use-gl=swiftshader',
+          '--disable-background-timer-throttling',
+          '--disable-renderer-backgrounding',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-ipc-flooding-protection',
+          `--window-size=${width},${height}`,
+        ],
+      });
+    } catch (launchErr) {
+      const launchMsg = launchErr && launchErr.message ? String(launchErr.message) : String(launchErr);
+      const isBlockedEnv = (
+        launchMsg.includes('error while loading shared libraries') ||
+        launchMsg.includes('Failed to launch the browser process') ||
+        launchMsg.includes('ENOENT')
+      );
+      if (isBlockedEnv) {
+        process.stderr.write(
+          '[swim26-screenshot-runner] BLOCKED_ENV: chromium_runtime_unavailable\n' +
+          '[swim26-screenshot-runner] BLOCKED_ENV: Chromium could not start in this environment.\n' +
+          '[swim26-screenshot-runner] BLOCKED_ENV: ' + launchMsg + '\n'
+        );
+        process.exit(3);
+      }
+      throw launchErr;
+    }
 
     const page = await browser.newPage();
 

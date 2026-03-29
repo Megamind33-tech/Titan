@@ -21,10 +21,25 @@ The JSON/bin forms avoid whitespace quoting ambiguity.
 - Run `runner.test.js` before full screenshot regression.
 - Ensure baselines exist in `artifacts/baselines-real/`.
 
+## Real-environment proof command
+
+From repo root, this executes the real external runner path (not a mock):
+
+```bash
+SWIM26_REAL_SCREENSHOT_CMD_JSON='{"cmd":"node","args":["/abs/path/to/tools/babylon-screenshot-runner/runner.js"]}' \
+node_modules/.bin/tsx -e "/* invoke runSwim26RealScreenshotRegression with default capture */"
+```
+
+If Chromium dependencies are missing, this should fail as `blocked_environment`
+with `BLOCKED_ENV` details rather than as a visual regression.
+
 ## Blocked vs failed classification
 
 - **Blocked environment**: runner exits `3` or emits `BLOCKED_ENV:` (no render-capable environment).
-- **Render failure**: runner exits non-zero without blocked signal (environment existed, rendering failed).
+- **Setup failure**: command wiring/spawn could not start runner process reliably.
+- **Runner execution failure**: runner executed but failed (`exit 1`, missing output, etc.).
+- **Host verification failure**: SceneLoader/engine evidence failed before screenshot pass criteria.
+- **Screenshot parity failure**: baseline compare failed (real regression signal).
 
 These states are intentionally separate and visible in diff JSON.
 
@@ -33,7 +48,8 @@ These states are intentionally separate and visible in diff JSON.
 Each fixture writes:
 
 - `*.real.diff.json` (result + reasons + diagnostics)
-- `*.real.diff.ppm` (pixel diff image)
+- `*.host.verification.json` (host verification report)
+- `*.real.diff.ppm` (pixel diff image, when capture reaches comparison)
 - `*.runner.stdout.log`
 - `*.runner.stderr.log`
 

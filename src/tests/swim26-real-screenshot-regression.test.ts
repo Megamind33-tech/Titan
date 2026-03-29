@@ -73,6 +73,7 @@ test('real screenshot regression requires both host evidence and screenshot pari
   assert.equal(results[0].usedEngineLoaderPath, true);
   assert.equal(results[0].screenshotPass, true);
   assert.equal(results[0].fullPass, true);
+  assert.equal(results[0].failureClass, 'none');
   assert.equal(fs.existsSync(results[0].diffPath), true);
   assert.equal(fs.existsSync(results[0].diffImagePath), true);
   const diff = JSON.parse(fs.readFileSync(results[0].diffPath, 'utf-8'));
@@ -89,11 +90,13 @@ test('real screenshot regression reports blocked environment honestly', async ()
     capture: async () => ({
       ok: false,
       blocked: true,
+      failureClass: 'blocked_environment',
       blockedReason: 'No GPU/headless Babylon runtime available in CI image.',
     }),
   });
 
   assert.equal(results[0].fullPass, false);
   assert.equal(results[0].blocked, true);
+  assert.equal(results[0].failureClass, 'blocked_environment');
   assert.ok(results[0].reasons.some(reason => reason.includes('No GPU/headless Babylon runtime available')));
 });

@@ -28,14 +28,28 @@ No write permissions are needed or should be granted.
 ## How the token is used
 
 - The token is passed at import time by the user.
-- It is used only for the duration of the current import attempt
-  (prepare/import request path).
+- It is used only for the current in-memory import flow (prepare + confirm for
+  a single modal session) and is cleared when the modal is closed.
 - It is sent via the `Authorization: Bearer <token>` request header on
   GitHub API and raw content requests.
 - It is **not** persisted into project session payloads, export artifacts,
   import history, or any other durable storage.
 - It is **not** included in connector error messages, error context objects,
   logs, or debug output.
+
+## Retry / recovery behavior
+
+Titan supports recovery-oriented retry for token-based private imports:
+
+- Missing token for private repo → prompt to provide token and retry.
+- Invalid token (`INVALID_TOKEN`) → user can retry with corrected token.
+- Insufficient repository scope (`INSUFFICIENT_SCOPE`) → user can retry after
+  granting required read permissions.
+- SSO-required (`SSO_AUTH_REQUIRED`) → user can authorize token in GitHub and
+  retry.
+
+Retrying does not create partial project activation; activation occurs only
+after a successful import result.
 
 ## Organization and SAML SSO caveats
 
@@ -68,13 +82,13 @@ types:
 
 | Error type | HTTP condition | Description |
 |---|---|---|
-| `PRIVATE_REPO_AUTH_REQUIRED` | 404 without token, or private=true without token | Repo is private and no auth was provided |
+| `PRIVATE_REPO_AUTH_REQUIRED` | 403 without token, 404 with token and non-`Not Found` body, or `private=true` metadata without token | Repo is private/inaccessible for current auth state |
 | `INVALID_TOKEN` | 401 with token | Token is invalid or expired |
 | `UNAUTHORIZED` | 401 without token | Auth required but no token supplied |
 | `INSUFFICIENT_SCOPE` | 403 + "resource not accessible" message | Token lacks required repository read scope |
 | `SSO_AUTH_REQUIRED` | 403 + `x-github-sso: required` header | Org SSO authorization is required for the token |
 | `RATE_LIMITED` | 429, or 403 + rate limit message, or `x-ratelimit-remaining: 0` | API rate limit exceeded |
-| `REPO_NOT_FOUND` | 404 without distinguishable private signal | Repository does not exist |
+| `REPO_NOT_FOUND` | 404 with `Not Found` signal or no distinguishable private signal | Repository is missing or private but indistinguishable without additional auth |
 
 ## Public repo access
 

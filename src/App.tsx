@@ -951,7 +951,7 @@ export default function App() {
       setShowOnboarding(false);
       if (recovered.requiresRecovery && recovered.recoveryReason) {
         console.warn('[ProjectSessionRecovery]', recovered.recoveryReason);
-        setSessionRecoveryMessage('Your previous project session could not be restored.');
+        setSessionRecoveryMessage('We could not fully restore your last session.');
       }
     }
   }, [activateWithSession]);
@@ -1011,10 +1011,10 @@ export default function App() {
                   <div className="bg-[#151619]/90 backdrop-blur-md px-3 py-2 border border-white/10 rounded" data-testid="active-project-summary">
                     <div className="text-[9px] uppercase font-mono tracking-widest text-white/50">ACTIVE PROJECT</div>
                     <div className="text-[10px] font-mono text-white/80">{activeProjectSummary.profileName}</div>
-                    <div className="text-[9px] font-mono text-white/40">RUNTIME TARGET: {activeProjectSummary.runtimeTargetLabel}</div>
-                    <div className="text-[9px] font-mono text-white/35">ADAPTER: {activeProjectSummary.adapterName}</div>
-                    <div className="text-[9px] font-mono text-white/35">RUNTIME BRIDGE: {activeProjectSummary.bridgeId}</div>
-                    <div className="text-[9px] font-mono text-white/30">ACTIVATION: {activeProjectSummary.activationMode}</div>
+                    <div className="text-[9px] font-mono text-white/40">Runtime: {activeProjectSummary.runtimeTargetLabel}</div>
+                    <div className="text-[9px] font-mono text-white/35">Adapter: {activeProjectSummary.adapterName}</div>
+                    <div className="text-[9px] font-mono text-white/35">Bridge: {activeProjectSummary.bridgeId}</div>
+                    <div className="text-[9px] font-mono text-white/30">Activation: {activeProjectSummary.activationMode}</div>
                   </div>
                   <div className="flex bg-[#151619]/90 backdrop-blur-md p-1 gap-1 border border-white/10 rounded">
                     <button
@@ -1041,12 +1041,12 @@ export default function App() {
 
             {sessionRecoveryMessage && (
               <div className="absolute top-20 left-4 z-50 bg-amber-500/20 border border-amber-400/40 rounded px-3 py-2 text-[10px] font-mono text-amber-100 flex items-center gap-3" data-testid="project-session-recovery-banner">
-                <span>{sessionRecoveryMessage} We reset to a safe project setup. Please choose your project type to continue.</span>
+                <span>{sessionRecoveryMessage} Titan reopened with a safe setup. Pick your project type to continue.</span>
                 <button
                   onClick={() => setShowOnboarding(true)}
                   className="px-2 py-1 border border-amber-200/40 rounded text-amber-50 hover:bg-amber-400/20"
                 >
-                  REVIEW SETUP
+                  REVIEW PROJECT SETUP
                 </button>
               </div>
             )}
