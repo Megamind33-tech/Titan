@@ -7,6 +7,13 @@ import { EnvironmentPreset, DEFAULT_ENVIRONMENT } from '../types/environment';
 import { TerrainData } from '../types/terrain';
 import { Path } from '../types/paths';
 import { CollisionZone } from '../types/collision';
+import {
+  validatePersistedModelWithRepair,
+  validateSceneSettingsWithRepair,
+  validateAndRepairPersistedScene,
+  repairPersistedModel,
+  repairSceneSettings,
+} from '../services/PersistenceContractValidation';
 
 // Schema version for migrations
 export const CURRENT_SCHEMA_VERSION = '2.0.0';
@@ -336,17 +343,26 @@ export const saveSceneVersion = async (
 };
 
 /**
- * Load a version of the scene from history with validation.
+ * Load a version of the scene from history with hardened validation and repair.
  *
- * VALIDATION:
+ * VALIDATION & REPAIR STRATEGY:
  * - Schema version checked (migrations applied if needed)
- * - All models validated (transform, colors, opacity)
- * - All scene settings validated
- * - Malformed data logged with warnings (doesn't block load)
+ * - All models validated and repaired (transforms, colors, opacity)
+ * - All scene settings validated and repaired
+ * - Malformed data auto-repaired where possible
+ * - Unrecoverable issues logged, blocking load failure with diagnostics
+ *
+ * REPAIR CAPABILITIES:
+ * - Missing required fields: Generate defaults
+ * - Invalid transforms (NaN, Infinity): Reset to identity
+ * - Invalid colors: Reset to sensible defaults
+ * - Out-of-range values: Clamp to valid ranges
+ * - Missing optional fields: Apply comprehensive defaults
  *
  * WARNING: File/Blob objects are NOT restored because they cannot be persisted.
- * Loaded models will have undefined File fields and will need explicit re-upload or
- * fallback to placeholder/stub geometries. Texture map URLs are restored.
+ * Loaded models will have undefined File fields. Texture map URLs are restored.
+ *
+ * THROWS: If scene has blocking validation errors that cannot be repaired
  */
 export const loadSceneVersion = async (versionId: string): Promise<SceneState | null> => {
   const history: SceneState[] = (await localforage.getItem('scene_history')) || [];
@@ -356,23 +372,54 @@ export const loadSceneVersion = async (versionId: string): Promise<SceneState | 
   // Apply migrations if schema version is older
   state = applyMigrations(state);
 
-  // Validate loaded state
-  if (state.models && Array.isArray(state.models)) {
-    for (let i = 0; i < state.models.length; i++) {
-      const validation = validatePersistedModel(state.models[i]);
-      if (!validation.valid) {
-        console.warn(
-          `Model "${(state.models[i] as any)?.id}" has validation issues after load:\n${validation.errors.join('\n')}`
-        );
-      }
+  // Comprehensive validation and repair
+  const validation = validateAndRepairPersistedScene(state);
+
+  if (!validation.canLoad) {
+    const errorMessage = [
+      `Failed to load scene version ${versionId}.`,
+      `Blocking validation errors:`,
+      ...validation.allBlockingErrors.map(e => `  - ${e}`)
+    ].join('\n');
+    console.error(errorMessage);
+    throw new Error(errorMessage);
+  }
+
+  // Log any warnings or repairs
+  if (validation.issues.length > 0) {
+    const repairs = validation.issues
+      .filter(issue => issue.repairs.length > 0)
+      .flatMap(issue => issue.repairs);
+
+    if (repairs.length > 0) {
+      console.warn(
+        `Scene loaded with repairs:\n${repairs.map(r => `  - ${r}`).join('\n')}`
+      );
+    }
+
+    const warnings = validation.issues
+      .filter(issue => issue.warnings.length > 0)
+      .flatMap(issue => issue.warnings);
+
+    if (warnings.length > 0) {
+      console.warn(
+        `Scene loaded with warnings:\n${warnings.map(w => `  - ${w}`).join('\n')}`
+      );
     }
   }
 
-  const settingsValidation = validateSceneSettings(state.sceneSettings);
-  if (!settingsValidation.valid) {
-    console.warn(
-      `Scene settings have validation issues after load:\n${settingsValidation.errors.join('\n')}`
-    );
+  // Repair models if needed
+  if (state.models && Array.isArray(state.models)) {
+    state.models = state.models.map(model => {
+      const { repaired } = repairPersistedModel(model);
+      return repaired;
+    });
+  }
+
+  // Repair scene settings if needed
+  if (state.sceneSettings) {
+    const { repaired } = repairSceneSettings(state.sceneSettings);
+    state.sceneSettings = repaired;
   }
 
   // Ensure all optional fields have safe defaults
@@ -481,13 +528,18 @@ export interface AutoSaveState {
 }
 
 /**
- * Load auto-saved scene state with validation and migrations.
+ * Load auto-saved scene state with hardened validation and repair.
  *
- * VALIDATION:
+ * Same validation/repair strategy as loadSceneVersion:
  * - Schema version checked (migrations applied if needed)
- * - All models validated (transform, colors, opacity)
- * - All scene settings validated
- * - Malformed data logged with warnings (doesn't block load)
+ * - All models validated and repaired (transforms, colors, opacity)
+ * - All scene settings validated and repaired
+ * - Malformed data auto-repaired where possible
+ * - Unrecoverable issues logged, blocking load failure with diagnostics
+ *
+ * NOTE: Autosave is more permissive than manual version loads (logs but continues
+ * on recoverable errors) since autosave is a recovery mechanism and should not
+ * prevent editor startup.
  *
  * WARNING: File/Blob objects are NOT restored because they cannot be persisted.
  * Loaded models will have undefined File fields. Texture map URLs are restored.
@@ -502,26 +554,51 @@ export const loadAutoSave = async (): Promise<AutoSaveState | null> => {
   // Apply migrations if needed
   state = applyMigrations(state);
 
-  // Validate loaded models
-  if (state.models && Array.isArray(state.models)) {
-    for (let i = 0; i < state.models.length; i++) {
-      const validation = validatePersistedModel(state.models[i]);
-      if (!validation.valid) {
-        console.warn(
-          `Model "${(state.models[i] as any)?.id}" has validation issues after autosave load:\n${validation.errors.join('\n')}`
-        );
-      }
+  // Comprehensive validation and repair
+  const validation = validateAndRepairPersistedScene(state);
+
+  // For autosave, log issues but don't fail (autosave is recovery mechanism)
+  if (validation.issues.length > 0) {
+    const repairs = validation.issues
+      .filter(issue => issue.repairs.length > 0)
+      .flatMap(issue => issue.repairs);
+
+    if (repairs.length > 0) {
+      console.warn(
+        `Autosave loaded with repairs:\n${repairs.map(r => `  - ${r}`).join('\n')}`
+      );
+    }
+
+    const warnings = validation.issues
+      .filter(issue => issue.warnings.length > 0)
+      .flatMap(issue => issue.warnings);
+
+    if (warnings.length > 0) {
+      console.warn(
+        `Autosave loaded with warnings:\n${warnings.map(w => `  - ${w}`).join('\n')}`
+      );
     }
   }
 
-  // Validate scene settings
+  // If blocking errors exist in autosave, try to recover as much as possible
+  if (!validation.canLoad) {
+    console.error(
+      `Autosave has blocking errors. Some data may be lost:\n${validation.allBlockingErrors.map(e => `  - ${e}`).join('\n')}`
+    );
+  }
+
+  // Repair models if needed
+  if (state.models && Array.isArray(state.models)) {
+    state.models = state.models.map(model => {
+      const { repaired } = repairPersistedModel(model);
+      return repaired;
+    });
+  }
+
+  // Repair scene settings if needed
   if (state.sceneSettings) {
-    const settingsValidation = validateSceneSettings(state.sceneSettings);
-    if (!settingsValidation.valid) {
-      console.warn(
-        `Scene settings have validation issues after autosave load:\n${settingsValidation.errors.join('\n')}`
-      );
-    }
+    const { repaired } = repairSceneSettings(state.sceneSettings);
+    state.sceneSettings = repaired;
   }
 
   // Provide type-safe defaults for optional/missing fields
