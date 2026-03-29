@@ -1,9 +1,11 @@
 {
   "fixtureId": "swim26-showcase-handoff",
   "threshold": 0.995,
-  "similarity": 1,
-  "pass": true,
-  "reasons": [],
+  "similarity": 0.9512195121951219,
+  "pass": false,
+  "reasons": [
+    "Similarity 0.9512 is below threshold 0.9950."
+  ],
   "hostVerification": {
     "pass": true,
     "status": "partial",
@@ -19,14 +21,18 @@
       }
     ],
     "diagnosticSummary": {
-      "warnings": 1,
+      "warnings": 2,
       "errors": 1
     }
   },
-  "baselinePath": "/workspace/Titan/artifacts/baselines/swim26-showcase-handoff.svg",
-  "actualPath": "/workspace/Titan/artifacts/current/swim26-showcase-handoff.svg",
+  "baselinePath": "/home/user/Titan/artifacts/baselines/swim26-showcase-handoff.svg",
+  "actualPath": "/home/user/Titan/artifacts/current/swim26-showcase-handoff.svg",
   "tokenDelta": {
-    "missingFromActual": [],
-    "introducedInActual": []
+    "missingFromActual": [
+      "placeholder-flag-01"
+    ],
+    "introducedInActual": [
+      "placeholder-00000000-0000-4000-800-00004cbee742"
+    ]
   }
 }

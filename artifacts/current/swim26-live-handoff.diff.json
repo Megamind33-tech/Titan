@@ -15,12 +15,12 @@
       }
     ],
     "diagnosticSummary": {
-      "warnings": 1,
+      "warnings": 2,
       "errors": 0
     }
   },
-  "baselinePath": "/workspace/Titan/artifacts/baselines/swim26-live-handoff.svg",
-  "actualPath": "/workspace/Titan/artifacts/current/swim26-live-handoff.svg",
+  "baselinePath": "/home/user/Titan/artifacts/baselines/swim26-live-handoff.svg",
+  "actualPath": "/home/user/Titan/artifacts/current/swim26-live-handoff.svg",
   "tokenDelta": {
     "missingFromActual": [],
     "introducedInActual": []
