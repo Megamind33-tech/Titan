@@ -27,6 +27,11 @@ import {
   RepoDetectionResult,
 } from './Swim26RepoDetector';
 import {
+  loadSwim26Manifest,
+  LoadedSceneData,
+  buildSceneDataFromManifest,
+} from './Swim26ManifestLoader';
+import {
   selectProjectAdapter,
   getProjectSelectionGuidance,
 } from './ProjectAdapterRegistry';
@@ -59,6 +64,7 @@ export interface ImportPreparationResult {
 export interface ImportResult {
   success: boolean;
   session?: ProjectSession;
+  sceneData?: LoadedSceneData;
   sourceRepo: string;
   sourceRef: GitHubRepoReference | null;
   importedFiles: string[];
@@ -237,6 +243,26 @@ export class GitHubRepoImporter {
         return result;
       }
 
+      // Try to load scene data from manifest
+      let sceneData: LoadedSceneData | undefined;
+      const manifestFile = ingestResult.files.get('swim26.manifest.json');
+      if (manifestFile) {
+        try {
+          const manifestResult = loadSwim26Manifest(manifestFile);
+          if (manifestResult.errors.length === 0 && manifestResult.data) {
+            sceneData = buildSceneDataFromManifest(manifestResult.data, metadata);
+          } else {
+            result.warnings.push(
+              ...manifestResult.errors.map(e => `Manifest error: ${e.message}`)
+            );
+          }
+        } catch (error) {
+          result.warnings.push(
+            `Could not parse manifest: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
       // Create project session
       const session: ProjectSession = {
         sessionId: generateAuthoredId(),
@@ -255,6 +281,9 @@ export class GitHubRepoImporter {
       };
 
       result.session = session;
+      if (sceneData) {
+        result.sceneData = sceneData;
+      }
       result.success = true;
 
       return result;

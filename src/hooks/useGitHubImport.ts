@@ -39,6 +39,15 @@ export interface ImportResultData {
 }
 
 /**
+ * Extended result to pass to callbacks
+ */
+export interface ImportCompleteData extends ImportResultData {
+  objectCount: number;
+  assetCount: number;
+  pathCount: number;
+}
+
+/**
  * Hook state
  */
 export interface UseGitHubImportState {
@@ -134,9 +143,13 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
           ...prev,
           result: {
             session: result.session,
+            sceneData: result.sceneData,
             sourceRepo: result.sourceRepo,
             importedFiles: result.importedFiles,
             warnings: result.warnings,
+            objectCount: result.sceneData?.objects?.length || 0,
+            assetCount: result.sceneData?.assets?.length || 0,
+            pathCount: result.sceneData?.paths?.length || 0,
           },
           error: null,
         }));

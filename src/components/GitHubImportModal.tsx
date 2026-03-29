@@ -9,12 +9,12 @@
  */
 
 import React, { useState } from 'react';
-import { useGitHubImport, getPhaseMessage } from '../hooks/useGitHubImport';
+import { useGitHubImport, getPhaseMessage, ImportCompleteData } from '../hooks/useGitHubImport';
 import { ProjectSession } from '../types/projectSession';
 
 interface GitHubImportModalProps {
   isOpen: boolean;
-  onImportComplete?: (session: ProjectSession) => void;
+  onImportComplete?: (importData: ProjectSession, sceneData?: any) => void;
   onClose?: () => void;
 }
 
@@ -67,7 +67,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
 
   const handleImportComplete = () => {
     if (result?.session) {
-      onImportComplete?.(result.session);
+      onImportComplete?.(result.session, result.sceneData);
       handleClose();
     }
   };

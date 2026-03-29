@@ -44,6 +44,13 @@ import { getProjectSelectionGuidance } from './services/ProjectAdapterRegistry';
 import ProjectOnboardingModal from './components/ProjectOnboardingModal';
 import { getProjectAwareExportConfig } from './services/ProjectExportWorkflow';
 import { generateAuthoredId } from './utils/idUtils';
+import {
+  loadImportedObjects,
+  loadImportedEnvironment,
+  loadImportedPaths,
+  createImportSummary,
+} from './services/ImportedSceneLoader';
+import { LoadedSceneData } from './services/Swim26ManifestLoader';
 
 export interface ModelData {
   id: string;
@@ -1210,7 +1217,7 @@ export default function App() {
     }
   }, []);
 
-  const handleGitHubImportComplete = useCallback((importedSession: ProjectSession) => {
+  const handleGitHubImportComplete = useCallback((importedSession: ProjectSession, sceneData?: LoadedSceneData) => {
     try {
       // Activate the project with the imported session's metadata
       const activation = activateProjectForEditor(importedSession.metadata);
@@ -1220,6 +1227,42 @@ export default function App() {
       setProjectMetadata(importedSession.metadata);
       setActiveProject(activation);
       setShowOnboarding(false);
+
+      // Load imported scene data if available
+      if (sceneData) {
+        try {
+          // Load objects
+          const importedObjects = loadImportedObjects(sceneData);
+          setModels(importedObjects);
+
+          // Load environment if available
+          const importedEnvironment = loadImportedEnvironment(sceneData, environment);
+          setEnvironment(importedEnvironment);
+
+          // Load camera paths if available
+          const importedPaths = loadImportedPaths(sceneData);
+          if (importedPaths.length > 0) {
+            setCameraPaths(importedPaths);
+          }
+
+          // Create and log summary
+          const summary = createImportSummary(sceneData, importedSession.metadata.rootPath || 'unknown');
+          console.log('[GitHub Import] Scene data loaded:', {
+            projectName: summary.projectName,
+            objects: summary.objectCount,
+            assets: summary.assetCount,
+            paths: summary.pathCount,
+            warnings: summary.warnings,
+          });
+
+          if (summary.warnings.length > 0) {
+            console.warn('[GitHub Import] Warnings:', summary.warnings);
+          }
+        } catch (sceneError) {
+          console.warn('[GitHub Import] Could not load scene data:', sceneError);
+          // Continue anyway - session is valid even if scene data isn't
+        }
+      }
 
       // Persist the session
       persistProjectSession(importedSession);
@@ -1232,7 +1275,7 @@ export default function App() {
       console.error('[GitHub Import] Error handling import completion:', error);
       // Keep modal open so user can see error or retry
     }
-  }, []);
+  }, [environment, setModels, setEnvironment, setCameraPaths]);
 
   const selectedModel = models.find(m => m.id === selectedModelId);
 
