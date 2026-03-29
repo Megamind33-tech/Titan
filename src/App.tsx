@@ -1056,7 +1056,7 @@ export default function App() {
                   onClick={() => setShowOnboarding(true)}
                   className="px-2 py-1 border border-amber-200/40 rounded text-amber-50 hover:bg-amber-400/20"
                 >
-                  REVIEW SETUP
+                  REVIEW PROJECT SETUP
                 </button>
               </div>
             )}

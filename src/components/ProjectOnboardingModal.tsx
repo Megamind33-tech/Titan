@@ -83,7 +83,7 @@ export default function ProjectOnboardingModal({
             data-testid="start-project-button"
             className="text-xs text-white bg-blue-500/30 hover:bg-blue-500/40 border border-blue-400/30 rounded px-4 py-2"
           >
-            START PROJECT
+            CREATE PROJECT
           </button>
         </div>
       </div>

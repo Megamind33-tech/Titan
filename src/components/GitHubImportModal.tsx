@@ -240,7 +240,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   disabled={isLoading}
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  Used only for this import attempt and never saved by Titan.
+                  Used only for this import and never saved by Titan.
                 </p>
               </div>
 
