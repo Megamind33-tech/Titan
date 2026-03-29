@@ -162,7 +162,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
         setState(prev => ({
           ...prev,
           result: {
-            session: result.session,
+            session: result.session!,
             sceneData: result.sceneData,
             sourceRepo: result.sourceRepo,
             importedFiles: result.importedFiles,

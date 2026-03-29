@@ -24,7 +24,7 @@ export async function analyzeAsset(url: string | File): Promise<AssetAnalysis> {
   return new Promise((resolve, reject) => {
     loader.load(
       loadUrl,
-      (gltf) => {
+      (gltf: { scene: THREE.Group }) => {
         const scene = gltf.scene;
         const box = new THREE.Box3().setFromObject(scene);
         const size = new THREE.Vector3();
@@ -72,7 +72,7 @@ export async function analyzeAsset(url: string | File): Promise<AssetAnalysis> {
         });
       },
       undefined,
-      (error) => {
+      (error: ErrorEvent) => {
         if (typeof url !== 'string') {
           URL.revokeObjectURL(loadUrl);
         }

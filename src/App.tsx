@@ -1146,8 +1146,8 @@ export default function App() {
             </div>
 
             {uiVisible && (
-              <InspectorPanel 
-                model={selectedModel}
+              <InspectorPanel
+                model={selectedModel ?? null}
                 models={models}
                 layers={layers}
                 onUpdateModel={handleUpdateModel}
@@ -1166,7 +1166,7 @@ export default function App() {
                 environment={environment}
                 onUpdateEnvironment={setEnvironment}
                 cameraPresets={cameraPresets}
-                activeCameraPresetId={activeCameraPresetId}
+                activeCameraPresetId={activeCameraPresetId ?? ''}
                 onUpdateCameraPresets={setCameraPresets}
                 onSetActiveCameraPreset={setActiveCameraPresetId}
                 cameraPaths={cameraPaths}
@@ -1262,7 +1262,7 @@ export default function App() {
                 setIsReplacementModalOpen(false);
                 setReplacementAsset(null);
               }}
-              currentModel={selectedModel}
+              currentModel={selectedModel ?? null}
               newAsset={replacementAsset}
               onConfirm={handleConfirmReplacement}
             />

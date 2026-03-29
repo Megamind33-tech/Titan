@@ -31,7 +31,7 @@ test('plugin bridge exposes real asset library and addAsset integration', async 
     triggerUIUpdate: () => {},
   });
 
-  let ctx: PluginContext | null = null;
+  let ctx!: PluginContext;
   const pluginId = `test-assets-${Date.now()}`;
   pluginManager.register({
     metadata: {
@@ -64,7 +64,7 @@ test('plugin bridge enforces permissions and persists plugin data', async () => 
     triggerUIUpdate: () => {},
   });
 
-  let ctx: PluginContext | null = null;
+  let ctx!: PluginContext;
   const pluginId = `test-data-${Date.now()}`;
   pluginManager.register({
     metadata: {
@@ -99,7 +99,7 @@ test('plugin UI bridge enforces extension permissions', async () => {
     triggerUIUpdate: () => {},
   });
 
-  let ctx: PluginContext | null = null;
+  let ctx!: PluginContext;
   const pluginId = `test-ui-perms-${Date.now()}`;
   pluginManager.register({
     metadata: {
@@ -150,7 +150,7 @@ test('plugin scene bridge returns state, routes updates, and supports subscribe/
     triggerUIUpdate: () => {},
   });
 
-  let ctx: PluginContext | null = null;
+  let ctx!: PluginContext;
   const received: any[] = [];
   const pluginId = `test-scene-${Date.now()}`;
   pluginManager.register({
@@ -199,7 +199,7 @@ test('plugin bridge gates unavailable core capabilities with explicit errors', a
     triggerUIUpdate: () => {},
   });
 
-  let ctx: PluginContext | null = null;
+  let ctx!: PluginContext;
   const pluginId = `test-capability-${Date.now()}`;
   pluginManager.register({
     metadata: {

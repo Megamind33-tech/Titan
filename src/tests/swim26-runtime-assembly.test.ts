@@ -181,7 +181,7 @@ test('rejects unsafe asset urls before load attempt', async () => {
 });
 
 test('SceneLoader-backed resolver uses Babylon-style ImportMeshAsync signature', async () => {
-  let captured: { rootUrl: string; sceneFilename: string } | null = null;
+  let captured!: { rootUrl: string; sceneFilename: string };
   const resolver = createBabylonSceneLoaderResolver({
     importMeshAsync: async (_meshNames, rootUrl, sceneFilename) => {
       captured = { rootUrl, sceneFilename };
@@ -219,7 +219,7 @@ test('SceneLoader-backed resolver uses Babylon-style ImportMeshAsync signature',
 });
 
 test('SceneLoader-backed resolver supports relative urls without hidden host assumptions', async () => {
-  let captured: { rootUrl: string; sceneFilename: string } | null = null;
+  let captured!: { rootUrl: string; sceneFilename: string };
   const resolver = createBabylonSceneLoaderResolver({
     importMeshAsync: async (_meshNames, rootUrl, sceneFilename) => {
       captured = { rootUrl, sceneFilename };

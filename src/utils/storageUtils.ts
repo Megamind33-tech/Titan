@@ -374,7 +374,7 @@ export const loadSceneVersion = async (versionId: string): Promise<SceneState | 
   if (!state) return null;
 
   // Apply migrations if schema version is older
-  state = applyMigrations(state);
+  state = applyMigrations(state) as SceneState;
 
   // Comprehensive validation and repair
   const validation = validateAndRepairPersistedScene(state);

@@ -127,7 +127,7 @@ test('deactivates stale nodes (removed from manifest)', () => {
   // Verify mesh was deactivated
   assert.equal(mesh2.isEnabled, false);
   assert.equal(mesh2.visibility, 0);
-  assert.equal(mesh2.metadata.isDeactivated, true);
+  assert.equal(mesh2.metadata!.isDeactivated, true);
 });
 
 test('idempotency: importing same manifest twice produces same result', () => {
@@ -181,8 +181,8 @@ test('handles mixed updates, creations, and deactivations in one sync', () => {
 
 test('preserves runtime-injected metadata during updates', () => {
   const mesh1 = createMockMesh('uuid-podium', 'Podium', [0, 0, 0]);
-  mesh1.metadata.gameplayData = { points: 100, active: true };
-  mesh1.metadata.runtimeState = { lastHit: Date.now() };
+  mesh1.metadata!.gameplayData = { points: 100, active: true };
+  mesh1.metadata!.runtimeState = { lastHit: Date.now() };
 
   const scene = createMockScene([mesh1]);
   const newNode = createMockNode('uuid-podium', 'Podium', [5, 5, 5]);
@@ -190,9 +190,9 @@ test('preserves runtime-injected metadata during updates', () => {
   applySwim26RoundTripSync(scene, [newNode]);
 
   // Verify runtime metadata was preserved
-  assert.equal(mesh1.metadata.gameplayData.points, 100);
-  assert.equal(mesh1.metadata.gameplayData.active, true);
-  assert.ok(mesh1.metadata.runtimeState.lastHit);
+  assert.equal(mesh1.metadata!.gameplayData.points, 100);
+  assert.equal(mesh1.metadata!.gameplayData.active, true);
+  assert.ok(mesh1.metadata!.runtimeState.lastHit);
 });
 
 test('handles empty manifest (all nodes removed)', () => {
@@ -260,7 +260,7 @@ test('unchanged nodes are skipped instead of counted as updates', () => {
 
 test('assetRef changes are updated in-place and diagnosed', () => {
   const mesh = createMockMesh('uuid-asset', 'Asset Node', [0, 0, 0]);
-  mesh.metadata.authoredAssetRef = { type: 'url', value: 'old.glb' };
+  mesh.metadata!.authoredAssetRef = { type: 'url', value: 'old.glb' };
   const scene = createMockScene([mesh]);
   const node = createMockNode('uuid-asset', 'Asset Node', [0, 0, 0], {
     assetRef: { type: 'url', value: 'new.glb' },
@@ -276,8 +276,8 @@ test('assetRef changes are updated in-place and diagnosed', () => {
 
 test('material and metadata changes are updated and diagnosed', () => {
   const mesh = createMockMesh('uuid-mat', 'Material Node', [0, 0, 0]);
-  mesh.metadata.authoredTags = ['old'];
-  mesh.metadata.authoredMetadata = { lane: 1 };
+  mesh.metadata!.authoredTags = ['old'];
+  mesh.metadata!.authoredMetadata = { lane: 1 };
   const scene = createMockScene([mesh]);
   const node = createMockNode('uuid-mat', 'Material Node', [0, 0, 0], {
     tags: ['new-tag'],
@@ -304,7 +304,7 @@ test('removed authored nodes produce deactivation diagnostics with authoredId', 
 
 test('previously deactivated authored node is reactivated when it reappears', () => {
   const mesh = createMockMesh('uuid-return', 'Return Node');
-  mesh.metadata.isDeactivated = true;
+  mesh.metadata!.isDeactivated = true;
   mesh.isEnabled = false;
   mesh.visibility = 0;
   const scene = createMockScene([mesh]);
@@ -312,7 +312,7 @@ test('previously deactivated authored node is reactivated when it reappears', ()
 
   const result = applySwim26RoundTripSync(scene, [node]);
   assert.equal(result.updatedMeshCount, 1);
-  assert.equal(mesh.metadata.isDeactivated, false);
+  assert.equal(mesh.metadata!.isDeactivated, false);
   assert.equal(mesh.isEnabled, true);
   assert.equal(mesh.visibility, 1);
 });
@@ -327,14 +327,14 @@ test('runtime-owned meshes are not deactivated when authored subset shrinks', ()
 
   applySwim26RoundTripSync(scene, []);
 
-  assert.equal(authored.metadata.isDeactivated, true);
-  assert.equal(runtimeOwned.metadata.gameplayData.score, 42);
-  assert.equal(runtimeOwned.metadata.isDeactivated, undefined);
+  assert.equal(authored.metadata!.isDeactivated, true);
+  assert.equal(runtimeOwned.metadata!.gameplayData.score, 42);
+  assert.equal(runtimeOwned.metadata!.isDeactivated, undefined);
 });
 
 test('parent drift is reported with warnings and skipped detail', () => {
   const mesh = createMockMesh('uuid-child', 'Child');
-  mesh.metadata.parentAuthoredId = 'uuid-parent-a';
+  mesh.metadata!.parentAuthoredId = 'uuid-parent-a';
   const scene = createMockScene([mesh]);
   const node = createMockNode('uuid-child', 'Child', [0, 0, 0], {
     metadata: { parentAuthoredId: 'uuid-parent-b' },
