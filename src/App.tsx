@@ -206,6 +206,7 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string | null>(null);
   const [isGitHubImportModalOpen, setIsGitHubImportModalOpen] = useState(false);
+  const [pendingImportRepoRef, setPendingImportRepoRef] = useState<string>('');
 
   const setModels = useCallback((newModels: ModelData[] | ((prev: ModelData[]) => ModelData[]), options?: { transient?: boolean, replace?: boolean }) => {
     setAppState(prev => ({
@@ -1262,19 +1263,15 @@ export default function App() {
       // Load imported scene data if available
       if (sceneData) {
         try {
-          // Load objects
+          // Precompute all scene updates so we apply state consistently.
           const importedObjects = loadImportedObjects(sceneData);
-          setModels(importedObjects);
-
-          // Load environment if available
           const importedEnvironment = loadImportedEnvironment(sceneData, environment);
-          setEnvironment(importedEnvironment);
-
-          // Load camera paths if available
           const importedPaths = loadImportedPaths(sceneData);
-          if (importedPaths.length > 0) {
-            setCameraPaths(importedPaths);
-          }
+
+          // Apply scene updates only after all parsing succeeds
+          setModels(importedObjects);
+          setEnvironment(importedEnvironment);
+          setCameraPaths(importedPaths);
 
           // Create and log summary
           const summary = createImportSummary(sceneData, importedSession.metadata.rootPath || 'unknown');
@@ -1314,7 +1311,14 @@ export default function App() {
           <div className="w-full h-screen flex flex-col relative overflow-hidden bg-bg-dark font-sans selection:bg-blue-500/30">
             {/* Menu Bar */}
             <MenuBar
-              onImportClick={() => setIsGitHubImportModalOpen(true)}
+              onImportClick={() => {
+                setPendingImportRepoRef('');
+                setIsGitHubImportModalOpen(true);
+              }}
+              onImportFromHistoryClick={(repoRef) => {
+                setPendingImportRepoRef(repoRef);
+                setIsGitHubImportModalOpen(true);
+              }}
               onExportClick={() => setIsExportModalOpen(true)}
               onNewProject={() => setShowOnboarding(true)}
             />
@@ -1550,11 +1554,15 @@ export default function App() {
               onOpenExisting={handleOpenLastProjectSession}
             />
 
-            <GitHubImportModal
-              isOpen={isGitHubImportModalOpen}
-              onImportComplete={handleGitHubImportComplete}
-              onClose={() => setIsGitHubImportModalOpen(false)}
-            />
+      <GitHubImportModal
+        isOpen={isGitHubImportModalOpen}
+        initialRepoInput={pendingImportRepoRef}
+        onImportComplete={handleGitHubImportComplete}
+        onClose={() => {
+          setIsGitHubImportModalOpen(false);
+          setPendingImportRepoRef('');
+        }}
+      />
 
             <ExportModal 
               isOpen={isExportModalOpen}

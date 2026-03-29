@@ -21,15 +21,12 @@ import {
   GitHubConnector,
   parseGitHubReference,
 } from './GitHubConnector';
-import {
-  detectProjectFromRepo,
-  assessRepoType,
-  RepoDetectionResult,
-} from './Swim26RepoDetector';
+import { extractMetadataFromRepo, assessRepoType, RepoDetectionResult } from './Swim26RepoDetector';
 import {
   loadSwim26Manifest,
   LoadedSceneData,
   buildSceneDataFromManifest,
+  validateManifest,
 } from './Swim26ManifestLoader';
 import {
   selectProjectAdapter,
@@ -111,6 +108,14 @@ export class GitHubRepoImporter {
       };
     }
 
+    if (reference.subpath) {
+      return {
+        valid: false,
+        reference: null,
+        errors: ['Repository subpath imports are not supported yet. Use owner/repo root.'],
+      };
+    }
+
     return {
       valid: true,
       reference,
@@ -122,7 +127,7 @@ export class GitHubRepoImporter {
    * Prepare for import without creating session
    * This is useful for showing preview/confirmation before actual import
    */
-  async prepareImport(repoInput: string): Promise<ImportPreparationResult> {
+  async prepareImport(repoInput: string, authToken?: string): Promise<ImportPreparationResult> {
     const result: ImportPreparationResult = {
       valid: false,
       repoRef: null,
@@ -144,7 +149,10 @@ export class GitHubRepoImporter {
 
     try {
       // Ingest repository
-      const ingestResult = await this.connector.ingestRepository(validation.reference!);
+      const activeConnector = authToken
+        ? new GitHubConnector({ accessMode: 'authenticated', authToken })
+        : this.connector;
+      const ingestResult = await activeConnector.ingestRepository(validation.reference!);
 
       if (!ingestResult.success) {
         result.errors.push(
@@ -158,16 +166,8 @@ export class GitHubRepoImporter {
       const detection = assessRepoType(ingestResult);
       result.detection = detection;
 
-      // Get project metadata probe (for adapter selection)
-      // We create this manually since we need to pass through the ingestion result
-      const probe: ProjectMetadataProbe = {};
-      if (ingestResult.metadata) {
-        probe.rootPath = `${ingestResult.metadata.owner}/${ingestResult.metadata.repo}#${ingestResult.branch}`;
-      }
-
-      // Extract markers, dependencies
-      result.metadata = this.extractMetadataFromIngest(ingestResult);
-      result.metadata!.profileHint = detection.isSWIM26 ? 'swim26-babylon' : undefined;
+      // Extract metadata via shared detector pathway to avoid duplicate heuristics
+      result.metadata = extractMetadataFromRepo(ingestResult);
 
       // Get guidance (for user selection or auto-selection)
       result.guidance = getProjectSelectionGuidance(result.metadata!);
@@ -189,7 +189,8 @@ export class GitHubRepoImporter {
    */
   async importRepository(
     repoInput: string,
-    profileIdHint?: string
+    profileIdHint?: string,
+    authToken?: string
   ): Promise<ImportResult> {
     const result: ImportResult = {
       success: false,
@@ -211,7 +212,10 @@ export class GitHubRepoImporter {
 
     try {
       // Ingest repository
-      const ingestResult = await this.connector.ingestRepository(validation.reference!);
+      const activeConnector = authToken
+        ? new GitHubConnector({ accessMode: 'authenticated', authToken })
+        : this.connector;
+      const ingestResult = await activeConnector.ingestRepository(validation.reference!);
 
       if (!ingestResult.success) {
         result.errors.push(
@@ -225,7 +229,7 @@ export class GitHubRepoImporter {
       result.warnings.push(...ingestResult.warnings);
 
       // Extract metadata and detect project type
-      const metadata = this.extractMetadataFromIngest(ingestResult);
+      const metadata = extractMetadataFromRepo(ingestResult);
 
       // Apply profile hint if provided
       if (profileIdHint) {
@@ -250,6 +254,13 @@ export class GitHubRepoImporter {
         try {
           const manifestResult = loadSwim26Manifest(manifestFile);
           if (manifestResult.errors.length === 0 && manifestResult.data) {
+            const schemaValidation = validateManifest(manifestResult.data);
+            if (!schemaValidation.valid) {
+              result.errors.push(...schemaValidation.issues.map(issue => `Manifest validation: ${issue}`));
+              result.warnings.push(...schemaValidation.warnings);
+              return result;
+            }
+            result.warnings.push(...schemaValidation.warnings);
             sceneData = buildSceneDataFromManifest(manifestResult.data, metadata);
           } else {
             result.warnings.push(
@@ -293,41 +304,6 @@ export class GitHubRepoImporter {
       );
       return result;
     }
-  }
-
-  /**
-   * Helper: Extract metadata from ingestion result
-   */
-  private extractMetadataFromIngest(ingestResult: GitHubRepoIngestResult): ProjectMetadataProbe {
-    const probe: ProjectMetadataProbe = {
-      rootPath: `${ingestResult.metadata?.owner}/${ingestResult.metadata?.repo}#${ingestResult.branch}`,
-      markerFiles: [],
-      dependencies: [],
-    };
-
-    // Check for marker files
-    for (const fileName of ingestResult.files.keys()) {
-      if (['swim26.config.json', 'babylon.config.json', 'swim26.manifest.json'].includes(fileName)) {
-        probe.markerFiles!.push(fileName);
-      }
-    }
-
-    // Extract package info and dependencies
-    const packageJsonFile = ingestResult.files.get('package.json');
-    if (packageJsonFile) {
-      try {
-        const packageJson = JSON.parse(packageJsonFile.content) as any;
-        probe.packageName = packageJson.name;
-        probe.dependencies = Object.keys({
-          ...packageJson.dependencies,
-          ...packageJson.devDependencies,
-        });
-      } catch {
-        // Silently fail
-      }
-    }
-
-    return probe;
   }
 
   /**

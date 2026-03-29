@@ -8,29 +8,29 @@
  * <GitHubImportModal isOpen={true} onImportComplete={handleSession} onClose={close} />
  */
 
-import React, { useState, useMemo } from 'react';
-import { useGitHubImport, getPhaseMessage, ImportCompleteData } from '../hooks/useGitHubImport';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useGitHubImport, getPhaseMessage } from '../hooks/useGitHubImport';
 import { ProjectSession } from '../types/projectSession';
 import { getFormattedHistory, getRecentImportUrls } from '../services/ImportHistoryService';
 
 interface GitHubImportModalProps {
   isOpen: boolean;
+  initialRepoInput?: string;
   onImportComplete?: (importData: ProjectSession, sceneData?: any) => void;
   onClose?: () => void;
 }
 
 export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
   isOpen,
+  initialRepoInput,
   onImportComplete,
   onClose,
 }) => {
-  const [repoInput, setRepoInput] = useState('');
+  const [repoInput, setRepoInput] = useState(initialRepoInput || '');
+  const [authToken, setAuthToken] = useState('');
   const [detectionPreview, setDetectionPreview] = useState<any>(null);
   const [confirmationMode, setConfirmationMode] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
-
-  const importHistory = useMemo(() => getFormattedHistory(), []);
-  const recentUrls = useMemo(() => getRecentImportUrls(5), []);
 
   const {
     progress,
@@ -42,6 +42,14 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
     clear,
   } = useGitHubImport();
 
+  const importHistory = useMemo(() => getFormattedHistory(), [isOpen]);
+  const recentUrls = useMemo(() => getRecentImportUrls(5), [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setRepoInput(initialRepoInput || '');
+  }, [initialRepoInput, isOpen]);
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setRepoInput(e.target.value);
     setConfirmationMode(false);
@@ -51,7 +59,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
   const handlePrepareImport = async () => {
     if (!repoInput.trim()) return;
 
-    const preparation = await prepareImport(repoInput);
+    const preparation = await prepareImport(repoInput, authToken || undefined);
     if (preparation) {
       setDetectionPreview(preparation);
       setConfirmationMode(true);
@@ -59,12 +67,13 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
   };
 
   const handleConfirmImport = async () => {
-    await importRepository(repoInput, detectionPreview?.guidance?.options?.[0]?.profileId);
+    await importRepository(repoInput, detectionPreview?.guidance?.options?.[0]?.profileId, authToken || undefined);
   };
 
   const handleClose = () => {
     clear();
-    setRepoInput('');
+    setRepoInput(initialRepoInput || '');
+    setAuthToken('');
     setConfirmationMode(false);
     setDetectionPreview(null);
     onClose?.();
@@ -100,16 +109,14 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
           {!confirmationMode && !result && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Repository URL or owner/repo
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">GitHub repository</label>
                 <div className="relative">
                   <input
                     type="text"
                     value={repoInput}
                     onChange={handleInputChange}
                     onFocus={() => setShowSuggestions(true)}
-                    placeholder="e.g., babylonjs/Babylon.js or owner/your-swim26-game"
+                    placeholder="Paste https://github.com/owner/repo or owner/repo"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     disabled={isLoading}
                   />
@@ -140,7 +147,25 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   )}
                 </div>
                 <p className="mt-2 text-xs text-gray-500">
-                  Public repositories only. Private repo support coming soon.
+                  Public repositories work out of the box. For private repositories, add a read-only token below.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Personal access token (optional)
+                </label>
+                <input
+                  type="password"
+                  value={authToken}
+                  onChange={(e) => setAuthToken(e.target.value)}
+                  placeholder="ghp_..."
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  autoComplete="off"
+                  disabled={isLoading}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Used only for this import attempt and never saved by Titan.
                 </p>
               </div>
 
@@ -179,7 +204,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   disabled={!repoInput.trim() || isLoading}
                 >
-                  Check Repository
+                  Continue
                 </button>
               </div>
             </div>
@@ -244,6 +269,23 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                       <li key={idx}>• {err}</li>
                     ))}
                   </ul>
+                </div>
+              )}
+
+              {recentUrls.length > 0 && (
+                <div className="border border-gray-200 rounded-lg p-3">
+                  <p className="text-xs font-medium text-gray-700 mb-2">Recent repository shortcuts</p>
+                  <div className="flex flex-wrap gap-2">
+                    {recentUrls.map((repo) => (
+                      <button
+                        key={repo}
+                        onClick={() => setRepoInput(repo)}
+                        className="px-2 py-1 text-[10px] rounded border border-gray-300 bg-gray-50 hover:bg-gray-100"
+                      >
+                        {repo}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
