@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validatePluginScenePatch } from '../services/PluginSceneValidation';
+import { validatePluginScenePatch, registerSceneKeyValidator } from '../services/PluginSceneValidation';
 
 test('validatePluginScenePatch accepts valid partial updates', () => {
   const valid = validatePluginScenePatch({
@@ -48,5 +48,151 @@ test('validatePluginScenePatch rejects malformed payloads and unsupported keys',
   assert.throws(
     () => validatePluginScenePatch({ prefabs: [{ id: 'pf1', name: 'P', models: [{ notId: true }] }] }),
     /prefab model entries must include id/
+  );
+});
+
+test('validator enforces strict validation for each supported key', () => {
+  // Valid models pass
+  const modelsPatch = validatePluginScenePatch({
+    models: [{
+      id: 'm1',
+      name: 'Model',
+      url: '/model.glb',
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    }],
+  });
+  assert.ok(modelsPatch.models);
+
+  // Invalid model missing required field
+  assert.throws(
+    () => validatePluginScenePatch({
+      models: [{
+        id: 'm1',
+        name: 'Model',
+        // missing url
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      }],
+    }),
+    /model entries must include.*url/
+  );
+
+  // Invalid layer missing required field
+  assert.throws(
+    () => validatePluginScenePatch({
+      layers: [{
+        id: 'l1',
+        name: 'Layer',
+        visible: true,
+        // missing locked
+        order: 0,
+      }],
+    }),
+    /layer entries are malformed/
+  );
+
+  // Invalid path with wrong point structure
+  assert.throws(
+    () => validatePluginScenePatch({
+      paths: [{
+        id: 'p1',
+        name: 'Path',
+        closed: false,
+        width: 1,
+        points: [{
+          // missing id
+          position: [0, 0, 0],
+        }],
+      }],
+    }),
+    /control points are malformed/
+  );
+
+  // Invalid prefab missing models array
+  assert.throws(
+    () => validatePluginScenePatch({
+      prefabs: [{
+        id: 'pf1',
+        name: 'Prefab',
+        // missing models
+      }],
+    }),
+    /prefab entries are malformed/
+  );
+});
+
+test('validator rejects unsupported keys explicitly to prevent silent failures', () => {
+  const unsupportedKeys = ['environment', 'materials', 'lights', 'custom_data'];
+  for (const key of unsupportedKeys) {
+    assert.throws(
+      () => validatePluginScenePatch({ [key]: {} }),
+      /Unsupported scene.update key/
+    );
+  }
+});
+
+test('validator remains safe when multiple keys are present', () => {
+  // Valid: multiple valid keys
+  const valid = validatePluginScenePatch({
+    models: [{ id: 'm1', name: 'M', url: '/m', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }],
+    layers: [{ id: 'l1', name: 'L', visible: true, locked: false, order: 0 }],
+  });
+  assert.ok(valid.models && valid.layers);
+
+  // Invalid: one key valid, one invalid
+  assert.throws(
+    () => validatePluginScenePatch({
+      models: [{ id: 'm1', name: 'M', url: '/m', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }],
+      layers: [{ id: 'l1', name: 'L', visible: true, locked: false }], // missing order
+    }),
+    /layer entries are malformed/
+  );
+
+  // Invalid: one key valid, one unsupported
+  assert.throws(
+    () => validatePluginScenePatch({
+      models: [{ id: 'm1', name: 'M', url: '/m', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }],
+      environment: { brightness: 1 }, // unsupported
+    }),
+    /Unsupported scene.update key/
+  );
+});
+
+test('registerSceneKeyValidator enables safe schema expansion for future keys', () => {
+  const customValidatorCalls: any[] = [];
+  const customValidator = (value: any) => {
+    customValidatorCalls.push(value);
+    if (!Array.isArray(value)) throw new Error('custom_items must be an array');
+  };
+
+  registerSceneKeyValidator('custom_items', customValidator);
+
+  // Custom key now accepted
+  const result = validatePluginScenePatch({
+    custom_items: [1, 2, 3],
+  });
+  assert.ok((result as any).custom_items);
+  assert.equal(customValidatorCalls.length, 1);
+
+  // Custom key validates strictly
+  assert.throws(
+    () => validatePluginScenePatch({
+      custom_items: 'not an array',
+    }),
+    /custom_items must be an array/
+  );
+});
+
+test('registerSceneKeyValidator prevents duplicate key registration', () => {
+  // Register once
+  registerSceneKeyValidator('test_unique_key', () => {});
+
+  // Attempt to register again
+  assert.throws(
+    () => registerSceneKeyValidator('test_unique_key', () => {}),
+    /already registered/
   );
 });
