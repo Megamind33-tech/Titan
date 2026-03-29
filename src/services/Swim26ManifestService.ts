@@ -3,13 +3,14 @@ import { EnvironmentPreset } from '../types/environment';
 import { Path } from '../types/paths';
 
 export interface Swim26SceneManifest {
-  version: '1.0.0';
+  version: '1.0.0' | '1.1.0';
   runtime: 'babylon';
   projectType: 'swim26-babylon';
   authoredBy: 'titan';
   authoredContent: {
     objects: Array<{
-      id: string;
+      authoredId?: string;  // ADDED: Stable round-trip ID (v1.1.0+); optional for backward compat
+      id: string;           // Editor ID (deprecated in v1.1.0, kept for compat)
       name: string;
       assetRef?: {
         type: 'url' | 'asset-id';
@@ -38,7 +39,8 @@ export interface Swim26SceneManifest {
       backgroundColor: string;
     };
     paths: Array<{
-      id: string;
+      authoredId?: string;  // ADDED: Stable round-trip ID (v1.1.0+); optional for backward compat
+      id: string;           // Editor ID (deprecated in v1.1.0, kept for compat)
       type: string;
       points: [number, number, number][];
     }>;
@@ -53,12 +55,13 @@ export const buildSwim26Manifest = (input: {
   paths: Path[];
 }): Swim26SceneManifest => {
   return {
-    version: '1.0.0',
+    version: '1.1.0',  // UPDATED: Version with stable authoredId support
     runtime: 'babylon',
     projectType: 'swim26-babylon',
     authoredBy: 'titan',
     authoredContent: {
       objects: input.models.map(model => ({
+        authoredId: model.authoredId,  // ADDED: Stable round-trip ID
         id: model.id,
         name: model.name,
         assetRef: model.assetId
@@ -89,6 +92,7 @@ export const buildSwim26Manifest = (input: {
         backgroundColor: input.environment.backgroundColor,
       },
       paths: input.paths.map(path => ({
+        authoredId: (path as any).authoredId,  // ADDED: Stable round-trip ID
         id: path.id,
         type: path.type,
         points: path.points.map(point => point.position),
