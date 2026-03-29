@@ -76,6 +76,24 @@ export const exportScene = async (
   options: ExportOptions
 ): Promise<void> => {
   try {
+    // Helper: Sanitize filename to prevent path traversal and invalid filename characters
+    const sanitizeFilename = (input: string): string => {
+      // Remove path separators, null bytes, and control characters
+      let sanitized = input
+        .replace(/[\/\\:*?"<>|]/g, '_')  // Replace invalid filename characters
+        .replace(/\x00/g, '_')            // Replace null bytes
+        .replace(/^\./g, '_')             // Don't allow files starting with .
+        .replace(/\.{2,}/g, '_');         // Don't allow .. (parent directory)
+
+      // Truncate if too long (255 is typical filesystem limit)
+      if (sanitized.length > 200) {
+        sanitized = sanitized.substring(0, 200);
+      }
+
+      // Ensure not empty after sanitization
+      return sanitized.length > 0 ? sanitized : 'unnamed';
+    };
+
     // ─── PHASE 1: COMPREHENSIVE PREFLIGHT VALIDATION ───────────────────────────────────
     const modelsToExport = models.filter(m => options.selectedIds.includes(m.id));
 
@@ -140,7 +158,9 @@ export const exportScene = async (
       if (options.format === 'original') {
         if (model.file && modelsFolder) {
           const extension = model.file.name.split('.').pop();
-          const filename = `${model.id}_${model.name}`;
+          // Sanitize model name before using in filename to prevent path traversal
+          const sanitizedName = sanitizeFilename(model.name);
+          const filename = `${model.id}_${sanitizedName}`;
           modelsFolder.file(filename, model.file);
           modelFilePath = `models/${filename}`;
         }
@@ -177,13 +197,17 @@ export const exportScene = async (
             const gltfData = await new Promise<any>((resolve, reject) => {
               exporter.parse(clone, resolve, reject, { binary: true });
             });
-            const filename = `${model.id}_${model.name.split('.')[0]}.glb`;
+            // Sanitize model name before using in filename
+            const sanitizedName = sanitizeFilename(model.name);
+            const filename = `${model.id}_${sanitizedName}.glb`;
             modelsFolder.file(filename, gltfData);
             modelFilePath = `models/${filename}`;
           } else if (options.format === 'obj') {
             const exporter = new OBJExporter();
             const objData = exporter.parse(clone);
-            const filename = `${model.id}_${model.name.split('.')[0]}.obj`;
+            // Sanitize model name before using in filename
+            const sanitizedName = sanitizeFilename(model.name);
+            const filename = `${model.id}_${sanitizedName}.obj`;
             modelsFolder.file(filename, objData);
             modelFilePath = `models/${filename}`;
           }
@@ -206,11 +230,27 @@ export const exportScene = async (
         presetName: model.material?.name,
       };
 
-      // Phase 3: Build material texture maps (if available)
+      // Phase 3: Build material texture maps (extract all defined maps from editor)
       const materialMaps: StrictMaterialMaps | undefined = (
-        model.normalMapUrl || model.normalMapFile
+        model.normalMapUrl ||
+        model.normalMapFile ||
+        model.roughnessMapUrl ||
+        model.roughnessMapFile ||
+        model.metalnessMapUrl ||
+        model.metalnessMapFile ||
+        model.emissiveMapUrl ||
+        model.emissiveMapFile ||
+        model.alphaMapUrl ||
+        model.alphaMapFile ||
+        model.aoMapUrl ||
+        model.aoMapFile
       ) ? {
-        normalMap: model.normalMapUrl || undefined,
+        normalMap: model.normalMapUrl || model.normalMapFile || undefined,
+        roughnessMap: model.roughnessMapUrl || model.roughnessMapFile || undefined,
+        metalnessMap: model.metalnessMapUrl || model.metalnessMapFile || undefined,
+        emissiveMap: model.emissiveMapUrl || model.emissiveMapFile || undefined,
+        alphaMap: model.alphaMapUrl || model.alphaMapFile || undefined,
+        aoMap: model.aoMapUrl || model.aoMapFile || undefined,
       } : undefined;
 
       // Phase 3: Build UV transform (if available)
@@ -222,6 +262,19 @@ export const exportScene = async (
 
       // Phase 3: Export behavior tags and classification
       const childrenOfModel = modelsToExport.filter(m => m.parentId === model.id);
+
+      // Export custom metadata if available (must be JSON-serializable)
+      let metadata: Record<string, any> = {};
+      if (model.metadata) {
+        try {
+          // Verify metadata is JSON-serializable by attempting to stringify
+          JSON.stringify(model.metadata);
+          metadata = model.metadata;
+        } catch (e) {
+          // If not serializable, log warning and use empty metadata
+          console.warn(`Model "${model.id}" has non-serializable metadata, excluding from export`);
+        }
+      }
 
       // Add asset to manifest
       assets.push({
@@ -242,7 +295,7 @@ export const exportScene = async (
         uvTransform,
         behaviorTags: model.behaviorTags,
         classification: model.classification,
-        metadata: {},
+        metadata,
         parent: model.parentId || null,
         childrenIds: childrenOfModel.length > 0 ? childrenOfModel.map(m => m.id) : undefined,
         version: 2,

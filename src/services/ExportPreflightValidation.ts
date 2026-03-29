@@ -437,6 +437,94 @@ export const runPreflightValidation = (
   // Validate file availability
   issues.push(...validateFileAvailability(modelsToExport, options.format, 'File validation'));
 
+  // Validate system data structures (paths, zones, terrain, cameras, quality)
+  if (options.paths) {
+    for (const path of options.paths) {
+      if (!path.id || typeof path.id !== 'string') {
+        issues.push({
+          severity: 'warning',
+          code: 'INVALID_PATH_ID',
+          message: `Path validation: Path has invalid ID (${path.id})`,
+          context: { itemId: path.id },
+        });
+      }
+      if (!path.width || typeof path.width !== 'number' || path.width <= 0) {
+        issues.push({
+          severity: 'warning',
+          code: 'INVALID_PATH_WIDTH',
+          message: `Path validation: Path "${path.id}" has invalid width (${path.width})`,
+          context: { itemId: path.id, field: 'width' },
+        });
+      }
+      if (!Array.isArray(path.points) || path.points.length === 0) {
+        issues.push({
+          severity: 'warning',
+          code: 'INVALID_PATH_POINTS',
+          message: `Path validation: Path "${path.id}" has no control points`,
+          context: { itemId: path.id, field: 'points' },
+        });
+      }
+    }
+  }
+
+  if (options.collisionZones) {
+    for (const zone of options.collisionZones) {
+      if (!zone.id || typeof zone.id !== 'string') {
+        issues.push({
+          severity: 'warning',
+          code: 'INVALID_ZONE_ID',
+          message: `Zone validation: Zone has invalid ID`,
+          context: { itemId: zone.id },
+        });
+      }
+      if (!['box', 'cylinder', 'sphere'].includes(zone.shape)) {
+        issues.push({
+          severity: 'warning',
+          code: 'INVALID_ZONE_SHAPE',
+          message: `Zone validation: Zone "${zone.id}" has invalid shape (${zone.shape})`,
+          context: { itemId: zone.id, field: 'shape' },
+        });
+      }
+      if (!Array.isArray(zone.scale) || zone.scale.some((s: number) => s <= 0)) {
+        issues.push({
+          severity: 'warning',
+          code: 'INVALID_ZONE_SCALE',
+          message: `Zone validation: Zone "${zone.id}" has invalid scale`,
+          context: { itemId: zone.id, field: 'scale' },
+        });
+      }
+    }
+  }
+
+  if (options.cameraPresets) {
+    for (const preset of options.cameraPresets) {
+      if (!preset.id || typeof preset.id !== 'string') {
+        issues.push({
+          severity: 'warning',
+          code: 'INVALID_CAMERA_PRESET_ID',
+          message: `Camera preset validation: Preset has invalid ID`,
+          context: { itemId: preset.id },
+        });
+      }
+      if (!['perspective', 'orthographic'].includes(preset.type)) {
+        issues.push({
+          severity: 'warning',
+          code: 'INVALID_CAMERA_PRESET_TYPE',
+          message: `Camera preset validation: Preset "${preset.id}" has invalid type (${preset.type})`,
+          context: { itemId: preset.id, field: 'type' },
+        });
+      }
+      if (preset.type === 'perspective' && preset.fov && (preset.fov < 0 || preset.fov > 180)) {
+        issues.push({
+          severity: 'warning',
+          code: 'INVALID_CAMERA_FOV',
+          message: `Camera preset validation: Preset "${preset.id}" has invalid FOV (${preset.fov})`,
+          context: { itemId: preset.id, field: 'fov' },
+        });
+      }
+    }
+  }
+
   // Validate Three.js scene sync (optional check)
   if (options.threeScene) {
     for (const model of modelsToExport) {
