@@ -8,6 +8,9 @@ import Toolbar from './components/Toolbar';
 import ExportModal, { ExportOptions } from './components/ExportModal';
 import VersionHistoryModal from './components/VersionHistoryModal';
 import AssetBrowser from './components/AssetBrowser/AssetBrowser';
+import { GitHubImportModal } from './components/GitHubImportModal';
+import { MenuBar } from './components/MenuBar';
+import { addToImportHistory } from './services/ImportHistoryService';
 import GeminiAssistant from './components/GeminiAssistant';
 import SceneLayerPanel from './components/SceneLayerPanel';
 import PrefabCreationModal from './components/PrefabCreationModal';
@@ -43,6 +46,13 @@ import { getProjectSelectionGuidance } from './services/ProjectAdapterRegistry';
 import ProjectOnboardingModal from './components/ProjectOnboardingModal';
 import { getProjectAwareExportConfig } from './services/ProjectExportWorkflow';
 import { generateAuthoredId } from './utils/idUtils';
+import {
+  loadImportedObjects,
+  loadImportedEnvironment,
+  loadImportedPaths,
+  createImportSummary,
+} from './services/ImportedSceneLoader';
+import { LoadedSceneData } from './services/Swim26ManifestLoader';
 
 export interface ModelData {
   id: string;
@@ -195,6 +205,7 @@ export default function App() {
   const [projectSession, setProjectSession] = useState<ProjectSession | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string | null>(null);
+  const [isGitHubImportModalOpen, setIsGitHubImportModalOpen] = useState(false);
 
   const setModels = useCallback((newModels: ModelData[] | ((prev: ModelData[]) => ModelData[]), options?: { transient?: boolean, replace?: boolean }) => {
     setAppState(prev => ({
@@ -501,6 +512,25 @@ export default function App() {
   });
   const assetsRef = useRef(assets);
   const addAssetRef = useRef(addAsset);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMeta = e.ctrlKey || e.metaKey;
+
+      // Ctrl+I / Cmd+I: Open GitHub import
+      if (isMeta && e.key === 'i') {
+        e.preventDefault();
+        setIsGitHubImportModalOpen(true);
+      }
+
+      // Ctrl+E / Cmd+E: Open export (if needed)
+      // This might already be handled elsewhere
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     assetsRef.current = assets;
@@ -1208,12 +1238,91 @@ export default function App() {
     }
   }, []);
 
+  const handleGitHubImportComplete = useCallback((importedSession: ProjectSession, sceneData?: LoadedSceneData) => {
+    try {
+      // Track import history
+      const rootPath = importedSession.metadata.rootPath || 'unknown';
+      if (rootPath.startsWith('github:')) {
+        const repoPath = rootPath.replace('github:', '').split('#')[0];
+        const [owner, repo] = repoPath.split('/');
+        if (owner && repo) {
+          addToImportHistory(owner, repo, importedSession.projectName);
+        }
+      }
+
+      // Activate the project with the imported session's metadata
+      const activation = activateProjectForEditor(importedSession.metadata);
+
+      // Set the session and metadata
+      setProjectSession(importedSession);
+      setProjectMetadata(importedSession.metadata);
+      setActiveProject(activation);
+      setShowOnboarding(false);
+
+      // Load imported scene data if available
+      if (sceneData) {
+        try {
+          // Load objects
+          const importedObjects = loadImportedObjects(sceneData);
+          setModels(importedObjects);
+
+          // Load environment if available
+          const importedEnvironment = loadImportedEnvironment(sceneData, environment);
+          setEnvironment(importedEnvironment);
+
+          // Load camera paths if available
+          const importedPaths = loadImportedPaths(sceneData);
+          if (importedPaths.length > 0) {
+            setCameraPaths(importedPaths);
+          }
+
+          // Create and log summary
+          const summary = createImportSummary(sceneData, importedSession.metadata.rootPath || 'unknown');
+          console.log('[GitHub Import] Scene data loaded:', {
+            projectName: summary.projectName,
+            objects: summary.objectCount,
+            assets: summary.assetCount,
+            paths: summary.pathCount,
+            warnings: summary.warnings,
+          });
+
+          if (summary.warnings.length > 0) {
+            console.warn('[GitHub Import] Warnings:', summary.warnings);
+          }
+        } catch (sceneError) {
+          console.warn('[GitHub Import] Could not load scene data:', sceneError);
+          // Continue anyway - session is valid even if scene data isn't
+        }
+      }
+
+      // Persist the session
+      persistProjectSession(importedSession);
+
+      // Close the modal
+      setIsGitHubImportModalOpen(false);
+
+      console.log(`[GitHub Import] Successfully imported project: ${importedSession.projectName} from ${importedSession.metadata.rootPath}`);
+    } catch (error) {
+      console.error('[GitHub Import] Error handling import completion:', error);
+      // Keep modal open so user can see error or retry
+    }
+  }, [environment, setModels, setEnvironment, setCameraPaths]);
+
   const selectedModel = models.find(m => m.id === selectedModelId);
 
   return (
-          <div className="w-full h-screen flex relative overflow-hidden bg-bg-dark font-sans selection:bg-blue-500/30">
-            {/* Top Bar / Global Actions */}
-            <div className="absolute top-4 left-4 z-50 flex gap-2">
+          <div className="w-full h-screen flex flex-col relative overflow-hidden bg-bg-dark font-sans selection:bg-blue-500/30">
+            {/* Menu Bar */}
+            <MenuBar
+              onImportClick={() => setIsGitHubImportModalOpen(true)}
+              onExportClick={() => setIsExportModalOpen(true)}
+              onNewProject={() => setShowOnboarding(true)}
+            />
+
+            {/* Main Content */}
+            <div className="flex-1 flex relative overflow-hidden">
+              {/* Top Bar / Global Actions */}
+              <div className="absolute top-4 left-4 z-50 flex gap-2">
               <button
                 onClick={() => setUiVisible(!uiVisible)}
                 className="bg-[#151619]/90 backdrop-blur-md px-4 py-2 hover:bg-white/5 border border-white/10 rounded transition-all duration-200 flex items-center gap-2 group"
@@ -1308,6 +1417,7 @@ export default function App() {
                 onExportClick={() => setIsExportModalOpen(true)}
                 onHistoryClick={() => setIsHistoryModalOpen(true)}
                 onAssetLibraryClick={() => setIsAssetBrowserOpen(true)}
+                onImportFromGitHubClick={() => setIsGitHubImportModalOpen(true)}
                 pluginUIVersion={pluginUIVersion}
                 collisionZones={appState.collisionZones}
                 onAddZone={handleAddZone}
@@ -1440,6 +1550,12 @@ export default function App() {
               onOpenExisting={handleOpenLastProjectSession}
             />
 
+            <GitHubImportModal
+              isOpen={isGitHubImportModalOpen}
+              onImportComplete={handleGitHubImportComplete}
+              onClose={() => setIsGitHubImportModalOpen(false)}
+            />
+
             <ExportModal 
               isOpen={isExportModalOpen}
               onClose={() => setIsExportModalOpen(false)}
@@ -1476,6 +1592,7 @@ export default function App() {
               newAsset={replacementAsset}
               onConfirm={handleConfirmReplacement}
             />
+            </div>
           </div>
   );
 }
