@@ -32,7 +32,7 @@ export const parseGitHubReference = (input: string): GitHubRepoReference | null 
   const trimmed = input.trim();
 
   // Try to parse as URL: https://github.com/owner/repo[/tree/branch][/subpath]
-  const urlRegex = /^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)(?:\/tree\/([^\/]+))?(?:\/(.+))?$/;
+  const urlRegex = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)(?:\/tree\/([^\/]+))?(?:\/(.+))?$/;
   const urlMatch = trimmed.match(urlRegex);
   if (urlMatch) {
     const [, owner, repo, branch, subpath] = urlMatch;

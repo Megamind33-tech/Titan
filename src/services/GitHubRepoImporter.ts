@@ -30,6 +30,7 @@ import {
   loadSwim26Manifest,
   LoadedSceneData,
   buildSceneDataFromManifest,
+  validateManifest,
 } from './Swim26ManifestLoader';
 import {
   selectProjectAdapter,
@@ -122,7 +123,7 @@ export class GitHubRepoImporter {
    * Prepare for import without creating session
    * This is useful for showing preview/confirmation before actual import
    */
-  async prepareImport(repoInput: string): Promise<ImportPreparationResult> {
+  async prepareImport(repoInput: string, authToken?: string): Promise<ImportPreparationResult> {
     const result: ImportPreparationResult = {
       valid: false,
       repoRef: null,
@@ -144,7 +145,10 @@ export class GitHubRepoImporter {
 
     try {
       // Ingest repository
-      const ingestResult = await this.connector.ingestRepository(validation.reference!);
+      const activeConnector = authToken
+        ? new GitHubConnector({ accessMode: 'authenticated', authToken })
+        : this.connector;
+      const ingestResult = await activeConnector.ingestRepository(validation.reference!);
 
       if (!ingestResult.success) {
         result.errors.push(
@@ -189,7 +193,8 @@ export class GitHubRepoImporter {
    */
   async importRepository(
     repoInput: string,
-    profileIdHint?: string
+    profileIdHint?: string,
+    authToken?: string
   ): Promise<ImportResult> {
     const result: ImportResult = {
       success: false,
@@ -211,7 +216,10 @@ export class GitHubRepoImporter {
 
     try {
       // Ingest repository
-      const ingestResult = await this.connector.ingestRepository(validation.reference!);
+      const activeConnector = authToken
+        ? new GitHubConnector({ accessMode: 'authenticated', authToken })
+        : this.connector;
+      const ingestResult = await activeConnector.ingestRepository(validation.reference!);
 
       if (!ingestResult.success) {
         result.errors.push(
@@ -250,6 +258,13 @@ export class GitHubRepoImporter {
         try {
           const manifestResult = loadSwim26Manifest(manifestFile);
           if (manifestResult.errors.length === 0 && manifestResult.data) {
+            const schemaValidation = validateManifest(manifestResult.data);
+            if (!schemaValidation.valid) {
+              result.errors.push(...schemaValidation.issues.map(issue => `Manifest validation: ${issue}`));
+              result.warnings.push(...schemaValidation.warnings);
+              return result;
+            }
+            result.warnings.push(...schemaValidation.warnings);
             sceneData = buildSceneDataFromManifest(manifestResult.data, metadata);
           } else {
             result.warnings.push(

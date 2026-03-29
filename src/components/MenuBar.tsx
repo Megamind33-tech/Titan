@@ -11,6 +11,7 @@ import { getFormattedHistory, clearImportHistory } from '../services/ImportHisto
 
 interface MenuBarProps {
   onImportClick: () => void;
+  onImportFromHistoryClick?: (repoRef: string) => void;
   onExportClick: () => void;
   onNewProject: () => void;
   recentProjects?: Array<{ id: string; name: string; projectType: string }>;
@@ -20,6 +21,7 @@ type MenuType = 'file' | 'edit' | 'view' | 'help' | null;
 
 export const MenuBar: React.FC<MenuBarProps> = ({
   onImportClick,
+  onImportFromHistoryClick,
   onExportClick,
   onNewProject,
   recentProjects = [],
@@ -118,7 +120,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
                       key={idx}
                       onClick={() => {
                         setActiveMenu(null);
-                        // Could trigger auto-import here
+                        onImportFromHistoryClick?.(entry.url);
                       }}
                       className="w-full px-4 py-1.5 text-left text-[9px] font-mono text-white/50 hover:text-white hover:bg-white/5 border-b border-white/5 last:border-b-0"
                       title={`Last imported: ${entry.lastImported}`}
