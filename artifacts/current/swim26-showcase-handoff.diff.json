@@ -1,0 +1,32 @@
+{
+  "fixtureId": "swim26-showcase-handoff",
+  "threshold": 0.995,
+  "similarity": 1,
+  "pass": true,
+  "reasons": [],
+  "hostVerification": {
+    "pass": true,
+    "status": "partial",
+    "usedEngineLoaderPath": true,
+    "loaderCalls": [
+      {
+        "rootUrl": "https://cdn.swim26.dev/assets/",
+        "sceneFilename": "podium.glb"
+      },
+      {
+        "rootUrl": "https://cdn.swim26.dev/assets/",
+        "sceneFilename": "missing-flag.glb"
+      }
+    ],
+    "diagnosticSummary": {
+      "warnings": 1,
+      "errors": 1
+    }
+  },
+  "baselinePath": "/workspace/Titan/artifacts/baselines/swim26-showcase-handoff.svg",
+  "actualPath": "/workspace/Titan/artifacts/current/swim26-showcase-handoff.svg",
+  "tokenDelta": {
+    "missingFromActual": [],
+    "introducedInActual": []
+  }
+}

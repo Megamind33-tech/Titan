@@ -1,0 +1,28 @@
+{
+  "fixtureId": "swim26-live-handoff",
+  "threshold": 0.995,
+  "similarity": 1,
+  "pass": true,
+  "reasons": [],
+  "hostVerification": {
+    "pass": true,
+    "status": "success",
+    "usedEngineLoaderPath": true,
+    "loaderCalls": [
+      {
+        "rootUrl": "/assets/swim/",
+        "sceneFilename": "lane-marker.glb"
+      }
+    ],
+    "diagnosticSummary": {
+      "warnings": 1,
+      "errors": 0
+    }
+  },
+  "baselinePath": "/workspace/Titan/artifacts/baselines/swim26-live-handoff.svg",
+  "actualPath": "/workspace/Titan/artifacts/current/swim26-live-handoff.svg",
+  "tokenDelta": {
+    "missingFromActual": [],
+    "introducedInActual": []
+  }
+}

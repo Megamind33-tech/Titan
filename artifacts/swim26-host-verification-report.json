@@ -1,0 +1,29 @@
+{
+  "summary": {
+    "warnings": 1,
+    "errors": 0
+  },
+  "visible": {
+    "meshCount": 1,
+    "meshNames": [
+      "lane-marker.glb"
+    ],
+    "positions": [
+      {
+        "id": "mesh-lane-marker.glb",
+        "x": 0,
+        "y": 0,
+        "z": 0
+      }
+    ],
+    "clearColor": "#1e90ff",
+    "environmentPresetId": "pool-competition"
+  },
+  "loaderCalls": [
+    {
+      "rootUrl": "/assets/swim/",
+      "sceneFilename": "lane-marker.glb"
+    }
+  ],
+  "usedEngineLoaderPath": true
+}
