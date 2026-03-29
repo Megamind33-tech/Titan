@@ -1,0 +1,65 @@
+{
+  "version": "1.0.0",
+  "runtime": "babylon",
+  "projectType": "swim26-babylon",
+  "authoredBy": "titan",
+  "authoredContent": {
+    "objects": [
+      {
+        "id": "podium-01",
+        "name": "Podium",
+        "assetRef": {
+          "type": "url",
+          "value": "https://cdn.swim26.dev/assets/podium.glb"
+        },
+        "transform": {
+          "position": [2, 0, -4],
+          "rotation": [0, 0.785, 0],
+          "scale": [1.2, 1.2, 1.2]
+        },
+        "material": {
+          "color": "#ffaa00",
+          "metalness": 0.6,
+          "roughness": 0.25
+        },
+        "tags": ["podium", "static"],
+        "metadata": {
+          "source": "showcase"
+        }
+      },
+      {
+        "id": "flag-01",
+        "name": "Flag",
+        "assetRef": {
+          "type": "url",
+          "value": "https://cdn.swim26.dev/assets/missing-flag.glb"
+        },
+        "transform": {
+          "position": [-3, 0, -2],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        "material": {
+          "color": "#ffffff",
+          "texture": "https://cdn.swim26.dev/textures/flag.png"
+        },
+        "tags": ["flag", "dynamic-visual"],
+        "metadata": {
+          "source": "showcase"
+        }
+      }
+    ],
+    "environment": {
+      "presetId": "pool-finals-night",
+      "intensity": 0.8,
+      "backgroundColor": "#0a1f44"
+    },
+    "paths": []
+  },
+  "runtimeOwned": [
+    "SWIM26 gameplay simulation and scoring logic"
+  ],
+  "unsupported": [
+    "Runtime gameplay script authoring"
+  ]
+}

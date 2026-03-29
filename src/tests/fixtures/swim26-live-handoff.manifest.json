@@ -1,0 +1,49 @@
+{
+  "version": "1.0.0",
+  "runtime": "babylon",
+  "projectType": "swim26-babylon",
+  "authoredBy": "titan",
+  "authoredContent": {
+    "objects": [
+      {
+        "id": "lane-01",
+        "name": "Lane Marker",
+        "assetRef": {
+          "type": "url",
+          "value": "/assets/swim/lane-marker.glb"
+        },
+        "transform": {
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        "material": {
+          "color": "#ffffff"
+        },
+        "tags": ["lane", "static"],
+        "metadata": {
+          "source": "titan-export"
+        }
+      }
+    ],
+    "environment": {
+      "presetId": "pool-competition",
+      "intensity": 0.9,
+      "backgroundColor": "#1e90ff"
+    },
+    "paths": [
+      {
+        "id": "camera-path-1",
+        "type": "camera",
+        "points": [[0, 8, 20], [0, 6, 12]]
+      }
+    ]
+  },
+  "runtimeOwned": [
+    "SWIM26 gameplay simulation and scoring logic",
+    "Babylon runtime bootstrapping"
+  ],
+  "unsupported": [
+    "Live runtime behavior debugging"
+  ]
+}

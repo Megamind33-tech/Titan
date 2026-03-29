@@ -11,6 +11,7 @@ import QualityPanel from './QualityPanel';
 import PluginManagerPanel from './PluginManagerPanel';
 import CollisionZonePanel from './CollisionZonePanel';
 import { pluginManager } from '../services/PluginManager';
+import { EditorCapabilityFlags } from '../types/projectAdapter';
 
 interface SidebarProps {
   onLoadModel: (file: File, type?: 'model' | 'environment') => void;
@@ -49,6 +50,7 @@ interface SidebarProps {
   onAddZone: (zone: CollisionZone) => void;
   onUpdateZone: (id: string, updates: Partial<CollisionZone>) => void;
   onDeleteZone: (id: string) => void;
+  capabilities?: EditorCapabilityFlags;
 }
 
 export default function Sidebar({
@@ -87,12 +89,19 @@ export default function Sidebar({
   onAddZone,
   onUpdateZone,
   onDeleteZone,
+  capabilities,
 }: SidebarProps) {
   const [activeTab, setActiveTab] = React.useState<'hierarchy' | 'layers' | 'prefabs' | 'zones' | 'settings' | 'plugins'>('layers');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const envInputRef = React.useRef<HTMLInputElement>(null);
 
   const activeZoneCount = collisionZones.filter(z => z.enabled).length;
+
+  React.useEffect(() => {
+    if (!(capabilities?.prefabs ?? true) && activeTab === 'prefabs') setActiveTab('layers');
+    if (!(capabilities?.collisionZones ?? true) && activeTab === 'zones') setActiveTab('layers');
+    if (!(capabilities?.pluginExtensions ?? true) && activeTab === 'plugins') setActiveTab('layers');
+  }, [capabilities, activeTab]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -119,7 +128,7 @@ export default function Sidebar({
           <Layers className="w-3.5 h-3.5" />
           <span className="text-[7px] font-mono uppercase tracking-widest">Layers</span>
         </button>
-        <button
+        {(capabilities?.prefabs ?? true) && <button
           onClick={() => setActiveTab('prefabs')}
           className={`flex-1 min-w-[48px] py-2 flex flex-col items-center gap-1 transition-colors ${
             activeTab === 'prefabs' ? 'text-blue-400 border-b border-blue-400' : 'text-white/20 hover:text-white/40'
@@ -127,7 +136,7 @@ export default function Sidebar({
         >
           <LayoutGrid className="w-3.5 h-3.5" />
           <span className="text-[7px] font-mono uppercase tracking-widest">Prefabs</span>
-        </button>
+        </button>}
         <button
           onClick={() => setActiveTab('hierarchy')}
           className={`flex-1 min-w-[48px] py-2 flex flex-col items-center gap-1 transition-colors ${
@@ -138,7 +147,7 @@ export default function Sidebar({
           <span className="text-[7px] font-mono uppercase tracking-widest">Objects</span>
         </button>
         {/* Zones tab — badge shows active count */}
-        <button
+        {(capabilities?.collisionZones ?? true) && <button
           onClick={() => setActiveTab('zones')}
           className={`relative flex-1 min-w-[48px] py-2 flex flex-col items-center gap-1 transition-colors ${
             activeTab === 'zones' ? 'text-blue-400 border-b border-blue-400' : 'text-white/20 hover:text-white/40'
@@ -151,8 +160,8 @@ export default function Sidebar({
               {activeZoneCount > 9 ? '9+' : activeZoneCount}
             </span>
           )}
-        </button>
-        <button
+        </button>}
+        {(capabilities?.pluginExtensions ?? true) && <button
           onClick={() => setActiveTab('plugins')}
           className={`flex-1 min-w-[48px] py-2 flex flex-col items-center gap-1 transition-colors ${
             activeTab === 'plugins' ? 'text-blue-400 border-b border-blue-400' : 'text-white/20 hover:text-white/40'
@@ -160,7 +169,7 @@ export default function Sidebar({
         >
           <Box className="w-3.5 h-3.5" />
           <span className="text-[7px] font-mono uppercase tracking-widest">Plugins</span>
-        </button>
+        </button>}
         <button
           onClick={() => setActiveTab('settings')}
           className={`flex-1 min-w-[48px] py-2 flex flex-col items-center gap-1 transition-colors ${
@@ -195,7 +204,7 @@ export default function Sidebar({
           </div>
         )}
 
-        {activeTab === 'prefabs' && (
+        {(capabilities?.prefabs ?? true) && activeTab === 'prefabs' && (
           <div className="-mx-4 -mt-4 h-full">
             <PrefabLibrary
               prefabs={prefabs}
@@ -219,13 +228,13 @@ export default function Sidebar({
                   <Plus className="w-4 h-4 text-white/40 group-hover:text-white transition-colors" />
                   <span className="text-[9px] uppercase font-mono tracking-widest text-white/30 group-hover:text-white/70">MODEL</span>
                 </button>
-                <button
+                {(capabilities?.environmentControls ?? true) && <button
                   onClick={() => envInputRef.current?.click()}
                   className="bg-white/5 hover:bg-white/10 border border-white/5 rounded p-3 transition-all duration-200 flex flex-col items-center gap-2 group"
                 >
                   <Globe className="w-4 h-4 text-white/40 group-hover:text-white transition-colors" />
                   <span className="text-[9px] uppercase font-mono tracking-widest text-white/30 group-hover:text-white/70">ENV</span>
-                </button>
+                </button>}
               </div>
             </div>
 
@@ -265,7 +274,7 @@ export default function Sidebar({
         )}
 
         {/* Collision Zones tab */}
-        {activeTab === 'zones' && (
+        {(capabilities?.collisionZones ?? true) && activeTab === 'zones' && (
           <div className="-mx-4 -mt-4 h-full">
             <CollisionZonePanel
               zones={collisionZones}
@@ -325,7 +334,7 @@ export default function Sidebar({
           </div>
         )}
 
-        {activeTab === 'plugins' && (
+        {(capabilities?.pluginExtensions ?? true) && activeTab === 'plugins' && (
           <div className="-mx-4 -mt-4 h-full flex flex-col">
             <div className="flex-1 overflow-y-auto">
               <PluginManagerPanel />

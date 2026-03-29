@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="220">
+  <rect x="0" y="0" width="360" height="220" fill="#0B132B"/>
+  <text x="12" y="18" font-size="12" fill="#D5E7FF">SWIM26 Runtime Verification</text>
+  <text x="12" y="34" font-size="10" fill="#9FB3C8">Meshes: 1 | Env: pool-competition</text>
+  <circle cx="30" cy="190" r="8" fill="#4DA3FF" /><text x="40" y="180" font-size="10" fill="#D5E7FF">mesh-lane</text>
+</svg>

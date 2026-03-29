@@ -38,6 +38,7 @@ import { Asset } from '../types/assets';
 import { CameraPreset, CameraPath, CameraPathPoint } from '../types/camera';
 import { Layer } from '../types/layers';
 import { Prefab } from '../types/prefabs';
+import { EditorCapabilityFlags } from '../types/projectAdapter';
 import { EnvironmentInspectorTab } from './inspector/EnvironmentInspectorTab';
 import { InspectorSection as Section } from './inspector/InspectorSection';
 
@@ -65,6 +66,7 @@ interface InspectorPanelProps {
   prefabs: Prefab[];
   onApplyToPrefab: (instanceId: string, prefabId: string) => void;
   onResetInstanceOverrides: (instanceId: string) => void;
+  capabilities?: EditorCapabilityFlags;
 }
 
 export default function InspectorPanel({ 
@@ -90,7 +92,8 @@ export default function InspectorPanel({
   layers,
   prefabs,
   onApplyToPrefab,
-  onResetInstanceOverrides
+  onResetInstanceOverrides,
+  capabilities
 }: InspectorPanelProps) {
   const [activeTab, setActiveTab] = useState<'object' | 'environment' | 'camera'>('object');
   const [expandedPointId, setExpandedPointId] = useState<string | null>(null);
@@ -132,6 +135,15 @@ export default function InspectorPanel({
   const [showTexturePicker, setShowTexturePicker] = useState<{ open: boolean, type: keyof MaterialPreset } | null>(null);
   const [selectedCameraCategory, setSelectedCameraCategory] = useState<string>('All');
   const [cameraSearchQuery, setCameraSearchQuery] = useState('');
+
+  React.useEffect(() => {
+    if (!(capabilities?.environmentControls ?? true) && activeTab === 'environment') {
+      setActiveTab('object');
+    }
+    if (!(capabilities?.pathAuthoring ?? true) && activeTab === 'camera') {
+      setActiveTab('object');
+    }
+  }, [capabilities, activeTab]);
 
   const activePreset = cameraPresets.find(p => p.id === activeCameraPresetId);
   const activePath = cameraPaths.find(p => p.id === activeCameraPathId);
@@ -336,18 +348,18 @@ export default function InspectorPanel({
         >
           Object
         </button>
-        <button 
+        {(capabilities?.environmentControls ?? true) && <button 
           onClick={() => setActiveTab('environment')}
           className={`flex-1 py-3 text-[10px] font-mono uppercase tracking-widest transition-all ${activeTab === 'environment' ? 'bg-white/10 text-white border-b-2 border-white' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
         >
           Environment
-        </button>
-        <button 
+        </button>}
+        {(capabilities?.pathAuthoring ?? true) && <button 
           onClick={() => setActiveTab('camera')}
           className={`flex-1 py-3 text-[10px] font-mono uppercase tracking-widest transition-all ${activeTab === 'camera' ? 'bg-white/10 text-white border-b-2 border-white' : 'text-white/40 hover:text-white hover:bg-white/5'}`}
         >
           Camera
-        </button>
+        </button>}
       </div>
 
       <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -542,6 +554,7 @@ export default function InspectorPanel({
           )}
           <button 
             onClick={onReplaceAsset}
+            disabled={!(capabilities?.materialAuthoring ?? true)}
             className="hardware-button w-full py-2 text-[10px] mt-2 flex items-center justify-center gap-2"
           >
             <RefreshCw className="w-3 h-3" /> {model.assetId ? 'Replace Asset' : 'Link to Library'}
@@ -627,6 +640,7 @@ export default function InspectorPanel({
         </div>
       </Section>
 
+      {(capabilities?.materialAuthoring ?? true) ? (
       <Section title="Material & Textures" defaultOpen>
         <div className="space-y-4">
           {/* Preset Selection */}
@@ -905,6 +919,13 @@ export default function InspectorPanel({
           )}
         </div>
       </Section>
+      ) : (
+      <Section title="Material & Textures" defaultOpen>
+        <p className="text-[10px] text-white/40">
+          Material editing is unavailable for the active project profile.
+        </p>
+      </Section>
+      )}
 
       <Section title="Lighting & Rendering">
         <div className="space-y-3">

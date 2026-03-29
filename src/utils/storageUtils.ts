@@ -7,6 +7,7 @@ import { EnvironmentPreset, DEFAULT_ENVIRONMENT } from '../types/environment';
 import { TerrainData } from '../types/terrain';
 import { Path } from '../types/paths';
 import { CollisionZone } from '../types/collision';
+import { ProjectMetadataProbe } from '../types/projectAdapter';
 import {
   validatePersistedModelWithRepair,
   validateSceneSettingsWithRepair,
@@ -254,6 +255,7 @@ export interface SceneState {
   terrain?: TerrainData;
   paths: Path[];
   collisionZones: CollisionZone[];
+  projectMetadata?: ProjectMetadataProbe;
 }
 
 /**
@@ -277,7 +279,8 @@ export const saveSceneVersion = async (
   layers?: Layer[],
   terrain?: TerrainData,
   paths?: Path[],
-  collisionZones?: CollisionZone[]
+  collisionZones?: CollisionZone[],
+  projectMetadata?: ProjectMetadataProbe
 ): Promise<SceneState> => {
   const versionId = Date.now().toString();
 
@@ -317,6 +320,7 @@ export const saveSceneVersion = async (
     terrain,
     paths: paths ?? [],
     collisionZones: collisionZones ?? [],
+    projectMetadata,
   };
 
   const history: SceneState[] = await localforage.getItem('scene_history') || [];
@@ -436,6 +440,7 @@ export const loadSceneVersion = async (versionId: string): Promise<SceneState | 
     terrain: state.terrain,
     paths: state.paths ?? [],
     collisionZones: state.collisionZones ?? [],
+    projectMetadata: state.projectMetadata,
   };
 };
 
@@ -466,7 +471,8 @@ export const autoSaveScene = async (
   layers?: Layer[],
   terrain?: TerrainData,
   paths?: Path[],
-  collisionZones?: CollisionZone[]
+  collisionZones?: CollisionZone[],
+  projectMetadata?: ProjectMetadataProbe
 ): Promise<void> => {
   // Validate scene settings
   const settingsValidation = validateSceneSettings(sceneSettings);
@@ -501,6 +507,7 @@ export const autoSaveScene = async (
     terrain,
     paths: paths ?? [],
     collisionZones: collisionZones ?? [],
+    projectMetadata,
   };
 
   await localforage.setItem('autosave', state);
@@ -525,6 +532,7 @@ export interface AutoSaveState {
   terrain?: TerrainData;
   paths: Path[];
   collisionZones: CollisionZone[];
+  projectMetadata?: ProjectMetadataProbe;
 }
 
 /**
@@ -622,5 +630,6 @@ export const loadAutoSave = async (): Promise<AutoSaveState | null> => {
     terrain: state.terrain,
     paths: state.paths ?? [],
     collisionZones: state.collisionZones ?? [],
+    projectMetadata: state.projectMetadata,
   };
 };

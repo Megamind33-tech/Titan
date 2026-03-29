@@ -34,6 +34,14 @@ import { pluginManager } from './services/PluginManager';
 import { validatePluginScenePatch } from './services/PluginSceneValidation';
 import { DiagnosticsPlugin } from './plugins/DiagnosticsPlugin';
 import { useAICommandExecutor } from './hooks/useAICommandExecutor';
+import { activateProjectForEditor } from './services/ProjectLoadService';
+import { validateExportFormatForAdapter } from './services/ProjectAdapterRegistry';
+import { ProjectMetadataProbe } from './types/projectAdapter';
+import { ProjectSession } from './types/projectSession';
+import { createProjectSession, loadProjectSession, persistProjectSession } from './services/ProjectSessionService';
+import { getProjectSelectionGuidance } from './services/ProjectAdapterRegistry';
+import ProjectOnboardingModal from './components/ProjectOnboardingModal';
+import { getProjectAwareExportConfig } from './services/ProjectExportWorkflow';
 
 export interface ModelData {
   id: string;
@@ -180,6 +188,11 @@ export default function App() {
   const [tagFilter, setTagFilter] = useState<string>('');
   const [preSoloLayers, setPreSoloLayers] = useState<Layer[] | null>(null);
   const [placementPrefabId, setPlacementPrefabId] = useState<string | null>(null);
+  const [projectMetadata, setProjectMetadata] = useState<ProjectMetadataProbe>({});
+  const [activeProject, setActiveProject] = useState(() => activateProjectForEditor({}));
+  const [projectSession, setProjectSession] = useState<ProjectSession | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string | null>(null);
 
   const setModels = useCallback((newModels: ModelData[] | ((prev: ModelData[]) => ModelData[]), options?: { transient?: boolean, replace?: boolean }) => {
     setAppState(prev => ({
@@ -613,6 +626,40 @@ export default function App() {
     const init = async () => {
       try {
         const savedState = await loadAutoSave();
+        const persistedSession = await loadProjectSession();
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const guidedProbe: ProjectMetadataProbe = {
+          profileHint: urlParams.get('projectProfile') ?? undefined,
+          runtimeHint: (urlParams.get('runtime') as ProjectMetadataProbe['runtimeHint']) ?? undefined,
+          adapterHint: urlParams.get('adapterId') ?? undefined,
+        };
+
+        const baseMetadata = persistedSession.session?.metadata ?? savedState?.projectMetadata ?? {};
+        const metadataProbe = { ...baseMetadata, ...guidedProbe };
+        const activatedProject = activateProjectForEditor(metadataProbe);
+        setProjectMetadata(metadataProbe);
+        setActiveProject(activatedProject);
+
+        if (persistedSession.session) {
+          setProjectSession({
+            ...persistedSession.session,
+            metadata: metadataProbe,
+            profileId: activatedProject.profile.id,
+            adapterId: activatedProject.adapter.id,
+            bridgeId: activatedProject.bridgeId,
+            runtimeTarget: activatedProject.adapter.runtime,
+            capabilities: activatedProject.activeCapabilities,
+          });
+        } else {
+          setShowOnboarding(true);
+        }
+
+        if (persistedSession.requiresRecovery && persistedSession.recoveryReason) {
+          setSessionRecoveryMessage(`Recovered using safe defaults: ${persistedSession.recoveryReason}`);
+          setShowOnboarding(true);
+        }
+
         if (savedState) {
           setAppState({
             models: (savedState.models as ModelData[]) || [],
@@ -654,12 +701,28 @@ export default function App() {
         layers,
         appState.terrain,
         appState.paths,
-        appState.collisionZones
+        appState.collisionZones,
+        projectMetadata
       );
     }, 2000); // Debounce auto-save by 2 seconds
 
     return () => clearTimeout(timeoutId);
-  }, [models, prefabs, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, appState.terrain, appState.paths, appState.collisionZones, isInitialLoad]);
+  }, [models, prefabs, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, appState.terrain, appState.paths, appState.collisionZones, isInitialLoad, projectMetadata]);
+
+
+  useEffect(() => {
+    if (!projectSession) return;
+    persistProjectSession({
+      ...projectSession,
+      metadata: projectMetadata,
+      profileId: activeProject.profile.id,
+      adapterId: activeProject.adapter.id,
+      bridgeId: activeProject.bridgeId,
+      runtimeTarget: activeProject.adapter.runtime,
+      capabilities: activeProject.activeCapabilities,
+      lastOpenedAt: new Date().toISOString(),
+    });
+  }, [projectSession, projectMetadata, activeProject]);
 
   const handleFocus = useCallback(() => {
     setFocusTrigger(Date.now());
@@ -1008,9 +1071,12 @@ export default function App() {
     setSelectedModelId(null);
   }, []);
 
+  const exportConfig = getProjectAwareExportConfig(activeProject);
+
   const handleExport = useCallback((selectedIds: string[], options: ExportOptions) => {
+    validateExportFormatForAdapter(activeProject.adapter.id, options.format);
     exportScene(models, { gridReceiveShadow, shadowSoftness, environment }, threeScene, { selectedIds, ...options, cameraSettings: { presets: cameraPresets, activePresetId: activeCameraPresetId, paths: cameraPaths, activePathId: activeCameraPathId }, layers });
-  }, [models, gridReceiveShadow, shadowSoftness, environment, threeScene, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers]);
+  }, [models, gridReceiveShadow, shadowSoftness, environment, threeScene, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, activeProject.adapter.id]);
 
   const handleSaveVersion = useCallback(async (note: string) => {
     await saveSceneVersion(
@@ -1022,13 +1088,20 @@ export default function App() {
       layers,
       appState.terrain,
       appState.paths,
-      appState.collisionZones
+      appState.collisionZones,
+      projectMetadata
     );
-  }, [models, prefabs, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, appState.terrain, appState.paths, appState.collisionZones]);
+  }, [models, prefabs, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, appState.terrain, appState.paths, appState.collisionZones, projectMetadata]);
 
   const handleLoadVersion = useCallback(async (versionId: string) => {
     const state = await loadSceneVersion(versionId) as SceneState | null;
     if (state) {
+      const metadataProbe = state.projectMetadata ?? {};
+      const activatedProject = activateProjectForEditor(metadataProbe);
+      setProjectMetadata(metadataProbe);
+      setActiveProject(activatedProject);
+      setProjectSession(prev => prev ? { ...prev, sceneVersionId: state.versionId } : prev);
+
       setAppState({
         models: (state.models as ModelData[]) || [],
         prefabs: state.prefabs || [],
@@ -1094,6 +1167,39 @@ export default function App() {
     setAppState(prev => prev, { transient: false });
   }, [setAppState]);
 
+
+  const handleCreateProjectSession = useCallback((payload: { projectName: string; profileHint?: string }) => {
+    const nextMetadata: ProjectMetadataProbe = {
+      ...projectMetadata,
+      profileHint: payload.profileHint ?? projectMetadata.profileHint,
+    };
+    const activation = activateProjectForEditor(nextMetadata);
+    const session = createProjectSession({
+      projectName: payload.projectName,
+      metadata: nextMetadata,
+    });
+
+    setProjectMetadata(nextMetadata);
+    setActiveProject(activation);
+    setProjectSession(session);
+    setShowOnboarding(false);
+  }, [projectMetadata]);
+
+  const handleOpenLastProjectSession = useCallback(async () => {
+    const recovered = await loadProjectSession();
+    if (recovered.session) {
+      const activation = activateProjectForEditor(recovered.session.metadata);
+      setProjectSession(recovered.session);
+      setProjectMetadata(recovered.session.metadata);
+      setActiveProject(activation);
+      setShowOnboarding(false);
+      if (recovered.requiresRecovery && recovered.recoveryReason) {
+        console.warn('[ProjectSessionRecovery]', recovered.recoveryReason);
+        setSessionRecoveryMessage('Your previous project session could not be restored.');
+      }
+    }
+  }, []);
+
   const selectedModel = models.find(m => m.id === selectedModelId);
 
   return (
@@ -1109,7 +1215,7 @@ export default function App() {
               
               {uiVisible && (
                 <>
-                  <button
+                  {(activeProject.activeCapabilities.materialAuthoring ?? true) && <button
                     onClick={() => {
                       setAssetBrowserMode('place');
                       setIsAssetBrowserOpen(true);
@@ -1118,7 +1224,15 @@ export default function App() {
                   >
                     <Sparkles className="w-3 h-3 text-white/50 group-hover:text-white" />
                     <span className="text-[10px] font-mono uppercase tracking-[0.2em] font-bold">ASSET_LIBRARY</span>
-                  </button>
+                  </button>}
+                  <div className="bg-[#151619]/90 backdrop-blur-md px-3 py-2 border border-white/10 rounded" data-testid="active-project-summary">
+                    <div className="text-[9px] uppercase font-mono tracking-widest text-white/50">ACTIVE PROJECT</div>
+                    <div className="text-[10px] font-mono text-white/80">{activeProject.profile.displayName}</div>
+                    <div className="text-[9px] font-mono text-white/40">RUNTIME TARGET: {activeProject.profile.runtimeTarget.toUpperCase()}</div>
+                    <div className="text-[9px] font-mono text-white/35">ADAPTER: {activeProject.adapter.displayName}</div>
+                    <div className="text-[9px] font-mono text-white/35">RUNTIME BRIDGE: {activeProject.bridgeId}</div>
+                    <div className="text-[9px] font-mono text-white/30">ACTIVATION: {activeProject.detection.mode.toUpperCase()}</div>
+                  </div>
                   <div className="flex bg-[#151619]/90 backdrop-blur-md p-1 gap-1 border border-white/10 rounded">
                     <button
                       onClick={undo}
@@ -1141,6 +1255,18 @@ export default function App() {
                 </>
               )}
             </div>
+
+            {sessionRecoveryMessage && (
+              <div className="absolute top-20 left-4 z-50 bg-amber-500/20 border border-amber-400/40 rounded px-3 py-2 text-[10px] font-mono text-amber-100 flex items-center gap-3" data-testid="project-session-recovery-banner">
+                <span>{sessionRecoveryMessage} We reset to a safe project setup. Please choose your project type to continue.</span>
+                <button
+                  onClick={() => setShowOnboarding(true)}
+                  className="px-2 py-1 border border-amber-200/40 rounded text-amber-50 hover:bg-amber-400/20"
+                >
+                  REVIEW SETUP
+                </button>
+              </div>
+            )}
 
             {uiVisible && (
               <Sidebar 
@@ -1179,6 +1305,7 @@ export default function App() {
                 onAddZone={handleAddZone}
                 onUpdateZone={handleUpdateZone}
                 onDeleteZone={handleDeleteZone}
+                capabilities={activeProject.activeCapabilities}
               />
             )}
             
@@ -1251,6 +1378,7 @@ export default function App() {
                 prefabs={prefabs}
                 onApplyToPrefab={handleApplyToPrefab}
                 onResetInstanceOverrides={handleResetInstanceOverrides}
+                capabilities={activeProject.activeCapabilities}
                 environment={environment}
                 onUpdateEnvironment={setEnvironment}
                 cameraPresets={cameraPresets}
@@ -1297,11 +1425,21 @@ export default function App() {
               />
             )}
 
+            <ProjectOnboardingModal
+              isOpen={showOnboarding}
+              guidance={getProjectSelectionGuidance(projectMetadata)}
+              onCreateProject={handleCreateProjectSession}
+              onOpenExisting={handleOpenLastProjectSession}
+            />
+
             <ExportModal 
               isOpen={isExportModalOpen}
               onClose={() => setIsExportModalOpen(false)}
               models={models}
               onExport={handleExport}
+              allowedFormats={exportConfig.allowedFormats}
+              recommendedFormat={exportConfig.recommendedFormat}
+              contextNote={exportConfig.contextNote}
             />
             <VersionHistoryModal
               isOpen={isHistoryModalOpen}

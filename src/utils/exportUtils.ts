@@ -12,6 +12,7 @@ import { CollisionZone } from '../types/collision';
 import { TerrainData } from '../types/terrain';
 import { CameraPreset, CameraPath } from '../types/camera';
 import { QualitySettings } from '../types/quality';
+import { buildSwim26Manifest } from '../services/Swim26ManifestService';
 import {
   preflightValidation,
   validateExportManifest,
@@ -42,7 +43,7 @@ export interface SceneExportManifest extends StrictSceneExportManifest {
 
 export interface ExportOptions {
   selectedIds: string[];
-  format: 'original' | 'glb' | 'obj';
+  format: 'original' | 'glb' | 'obj' | 'swim26-manifest';
   includeTextures: boolean;
   includeMaterials: boolean;
   // Phase 2: Scene metadata
@@ -192,7 +193,7 @@ export const exportScene = async (
             }
           });
 
-          if (options.format === 'glb') {
+          if (options.format === 'glb' || options.format === 'swim26-manifest') {
             const exporter = new GLTFExporter();
             const gltfData = await new Promise<any>((resolve, reject) => {
               exporter.parse(clone, resolve, reject, { binary: true });
@@ -427,8 +428,18 @@ export const exportScene = async (
 
     // ─── PHASE 4: WRITE TO ZIP ───────────────────────────────────────────
     zip.file("scene-manifest.json", JSON.stringify(validatedManifest, null, 2));
+
+    if (options.format === 'swim26-manifest') {
+      const swim26Manifest = buildSwim26Manifest({
+        models: modelsToExport,
+        environment: sceneSettings.environment,
+        paths: options.paths ?? [],
+      });
+      zip.file('swim26-manifest.json', JSON.stringify(swim26Manifest, null, 2));
+    }
+
     const content = await zip.generateAsync({ type: "blob" });
-    saveAs(content, "scene-export.zip");
+    saveAs(content, options.format === 'swim26-manifest' ? "swim26-export.zip" : "scene-export.zip");
 
   } catch (error) {
     // Export validation failed - abort completely, no partial export

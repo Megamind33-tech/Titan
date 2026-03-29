@@ -10,6 +10,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "test": "tsx --test src/tests/*.test.ts",
+    "test:swim26-real-render": "tsx --test src/tests/swim26-real-screenshot-regression.test.ts",
     "test:watch": "tsx --test --watch src/tests/*.test.ts"
   },
   "dependencies": {
