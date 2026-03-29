@@ -1,11 +1,12 @@
 /**
  * GitHub Connector Service
  *
- * Handles low-level GitHub repository access for public repositories.
+ * Handles low-level GitHub repository access. Supports public repos without
+ * auth and private repos via a fine-grained Personal Access Token (PAT).
  * Fetches repository metadata, file listings, and file contents.
  *
- * Scope: public + token-authenticated repository read flows.
- * OAuth / GitHub App auth are future enhancements.
+ * Scope: read-only access for public and PAT-authenticated private repos.
+ * OAuth and GitHub App auth are explicitly deferred.
  */
 
 import {
@@ -260,11 +261,12 @@ export class GitHubConnector {
       if (!response.ok) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.UNKNOWN,
-            `GitHub API error: ${response.status} ${response.statusText}`,
-            { status: response.status }
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { owner: ref.owner, repo: ref.repo, status: response.status },
+          }),
         };
       }
 
@@ -353,11 +355,12 @@ export class GitHubConnector {
       if (!response.ok) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.UNKNOWN,
-            `GitHub API error: ${response.status}`,
-            { status: response.status }
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { path: dirPath, branch, status: response.status },
+          }),
         };
       }
 
@@ -451,11 +454,12 @@ export class GitHubConnector {
       if (!response.ok) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.UNKNOWN,
-            `GitHub error: ${response.status}`,
-            { status: response.status }
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { filePath, branch, status: response.status },
+          }),
         };
       }
 
@@ -572,10 +576,12 @@ export class GitHubConnector {
 
     return fetch(url, {
       headers: this.config.authToken ? {
-        'Authorization': `token ${this.config.authToken}`,
-        'Accept': 'application/vnd.github.v3.raw+json',
+        // Bearer prefix is required for fine-grained PATs and is also accepted
+        // by classic PATs. Do not log or expose authToken outside this header.
+        'Authorization': `Bearer ${this.config.authToken}`,
+        'Accept': 'application/vnd.github.v3+json',
       } : {
-        'Accept': 'application/vnd.github.v3.raw+json',
+        'Accept': 'application/vnd.github.v3+json',
       },
       signal: controller.signal,
     }).finally(() => clearTimeout(timeoutId));

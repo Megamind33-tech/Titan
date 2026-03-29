@@ -4,7 +4,9 @@
  * Defines the contract for connecting to GitHub repositories,
  * fetching supported project data, and importing SWIM26 projects.
  *
- * Scope: Public repo read-only access. Private repo access is future work.
+ * Scope: Read-only access. Supports public repos (no token) and private repos
+ * via fine-grained Personal Access Token (PAT). OAuth and GitHub App auth are
+ * explicitly deferred.
  */
 
 /**
@@ -107,7 +109,7 @@ export const BLOCKED_FILE_PATTERNS = [
  */
 export interface GitHubConnectorConfig {
   accessMode: GitHubAccessMode;
-  authToken?: string; // optional GitHub token for higher rate limits
+  authToken?: string; // optional fine-grained PAT for authenticated private-repo access
   timeout?: number; // request timeout in ms (default: 10000)
   rateLimitBuffer?: number; // buffer for rate limiting awareness
 }
