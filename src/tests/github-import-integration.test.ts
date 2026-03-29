@@ -25,6 +25,7 @@ import {
  */
 class MockGitHubConnector extends GitHubConnector {
   private repoData: Map<string, GitHubRepoIngestResult>;
+  public lastSupportedFiles: string[] | null = null;
 
   constructor() {
     super({ accessMode: 'public-only' });
@@ -35,7 +36,8 @@ class MockGitHubConnector extends GitHubConnector {
     this.repoData.set(`${owner}/${repo}`, data);
   }
 
-  async ingestRepository(ref: any): Promise<GitHubRepoIngestResult> {
+  async ingestRepository(ref: any, supportedFiles?: string[]): Promise<GitHubRepoIngestResult> {
+    this.lastSupportedFiles = supportedFiles ? [...supportedFiles] : null;
     const key = `${ref.owner}/${ref.repo}`;
     const data = this.repoData.get(key);
 
@@ -345,6 +347,38 @@ describe('GitHub Import - Full Import Flow', () => {
     assert.ok(result.errors.some(error => error.includes('Manifest validation')));
     assert.strictEqual(result.session, undefined);
   });
+
+  it('keeps import file boundaries constrained to manifest/config metadata files', async () => {
+    const mockConnector = new MockGitHubConnector();
+    const importer = new GitHubRepoImporter(mockConnector);
+
+    mockConnector.registerMockRepo('test', 'bounded-files', {
+      success: true,
+      metadata: {
+        owner: 'test',
+        repo: 'bounded-files',
+        url: 'https://github.com/test/bounded-files',
+        isPrivate: false,
+        defaultBranch: 'main',
+      },
+      branch: 'main',
+      files: new Map([
+        ['package.json', mockFile('{ "name": "bounded-files" }')],
+      ]),
+      errors: [],
+      warnings: [],
+    });
+
+    const result = await importer.prepareImport('test/bounded-files');
+    assert.strictEqual(result.valid, true);
+    assert.ok(mockConnector.lastSupportedFiles, 'supported files list should be provided by importer');
+
+    const requestedFiles = mockConnector.lastSupportedFiles!;
+    assert.ok(requestedFiles.includes('swim26.manifest.json'));
+    assert.ok(requestedFiles.includes('package.json'));
+    assert.ok(!requestedFiles.includes('index.ts'), 'source files must not be included in import boundaries');
+    assert.ok(!requestedFiles.includes('.env'), 'environment secret files must not be included in import boundaries');
+  });
 });
 
 describe('GitHub Import - Error Handling', () => {
@@ -550,5 +584,130 @@ describe('GitHub Import - Private Auth Recovery (real connector)', () => {
     const second = await importer.prepareImport('private/repo', 'good-token');
     assert.strictEqual(second.valid, true);
     assert.strictEqual(second.errors.length, 0);
+  });
+
+  it('recovers full import after auth failure when retried with token', async () => {
+    const importer = new GitHubRepoImporter();
+
+    (global as any).fetch = async (url: string, init?: RequestInit) => {
+      if (url.includes('/repos/private/repo') && !url.includes('/contents/')) {
+        const authHeader = (init?.headers as Record<string, string> | undefined)?.Authorization
+          ?? (init?.headers as Record<string, string> | undefined)?.authorization;
+        const hasAuth = typeof authHeader === 'string' && authHeader.length > 0;
+        if (!hasAuth) {
+          return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+        }
+        return new Response(JSON.stringify({
+          private: true,
+          default_branch: 'main',
+          description: 'private repo',
+          topics: [],
+          language: 'TypeScript',
+          stargazers_count: 0,
+          updated_at: new Date().toISOString(),
+        }), { status: 200 });
+      }
+
+      if (url.includes('/contents/')) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+
+      if (url.includes('/swim26.manifest.json')) {
+        return new Response(JSON.stringify({
+          version: '1.0.0',
+          runtime: 'babylon',
+          projectType: 'swim26',
+          authoredBy: 'test',
+          authoredContent: {
+            scene: { nodes: [] },
+            environment: {},
+            paths: [],
+          },
+          runtimeOwned: { diagnostics: {} },
+          unsupported: [],
+        }), { status: 200 });
+      }
+
+      if (url.includes('/package.json')) {
+        return new Response('{\"name\":\"private-game\"}', { status: 200 });
+      }
+
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const first = await importer.importRepository('private/repo');
+    assert.strictEqual(first.success, false);
+    assert.ok(first.errors.some(error => error.includes(GitHubConnectorErrorType.REPO_NOT_FOUND) || error.includes(GitHubConnectorErrorType.PRIVATE_REPO_AUTH_REQUIRED)));
+
+    const second = await importer.importRepository('private/repo', undefined, 'good-token');
+    assert.strictEqual(second.success, true);
+    assert.ok(second.session, 'session should be created on retry with token');
+  });
+
+  it('recovers from invalid-token failure when retried with valid token', async () => {
+    const importer = new GitHubRepoImporter();
+
+    (global as any).fetch = async (url: string, init?: RequestInit) => {
+      if (url.includes('/repos/private/repo') && !url.includes('/contents/')) {
+        const authHeader = (init?.headers as Record<string, string> | undefined)?.Authorization
+          ?? (init?.headers as Record<string, string> | undefined)?.authorization;
+        if (authHeader === 'Bearer bad-token') {
+          return new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+        }
+        return new Response(JSON.stringify({
+          private: true,
+          default_branch: 'main',
+          description: 'private repo',
+          topics: [],
+          language: 'TypeScript',
+          stargazers_count: 0,
+          updated_at: new Date().toISOString(),
+        }), { status: 200 });
+      }
+
+      if (url.includes('/contents/')) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+
+      if (url.includes('/swim26.manifest.json')) {
+        return new Response(JSON.stringify({
+          version: '1.0.0',
+          runtime: 'babylon',
+          projectType: 'swim26',
+          authoredBy: 'test',
+          authoredContent: { scene: { nodes: [] }, environment: {}, paths: [] },
+          runtimeOwned: { diagnostics: {} },
+          unsupported: [],
+        }), { status: 200 });
+      }
+
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const first = await importer.importRepository('private/repo', undefined, 'bad-token');
+    assert.strictEqual(first.success, false);
+    assert.ok(first.errors.some(error => error.includes(GitHubConnectorErrorType.INVALID_TOKEN)));
+
+    const second = await importer.importRepository('private/repo', undefined, 'good-token');
+    assert.strictEqual(second.success, true);
+    assert.ok(second.session);
+  });
+
+  it('surfaces insufficient permission errors for private imports', async () => {
+    const importer = new GitHubRepoImporter();
+
+    (global as any).fetch = async (url: string) => {
+      if (url.includes('/repos/private/repo') && !url.includes('/contents/')) {
+        return new Response(
+          JSON.stringify({ message: 'Resource not accessible by personal access token' }),
+          { status: 403 }
+        );
+      }
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const result = await importer.prepareImport('private/repo', 'limited-token');
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.errors.some(error => error.includes(GitHubConnectorErrorType.INSUFFICIENT_SCOPE)));
   });
 });

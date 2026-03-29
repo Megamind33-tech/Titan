@@ -11,6 +11,24 @@
 import { ProjectMetadataProbe } from '../types/projectAdapter';
 import { GitHubFileContent } from '../types/gitHubConnector';
 
+type UnknownRecord = Record<string, unknown>;
+type ManifestObject = {
+  id: string;
+  authoredId?: string;
+  name: string;
+  assetRef?: {
+    type: string;
+    value: string;
+  };
+  transform?: {
+    position?: number[];
+    rotation?: number[];
+    scale?: number[];
+  };
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+};
+
 /**
  * Parsed SWIM26 manifest structure
  */
@@ -24,22 +42,7 @@ export interface Swim26ManifestData {
     description?: string;
     version?: string;
   };
-  objects?: Array<{
-    id: string;
-    authoredId?: string;
-    name: string;
-    assetRef?: {
-      type: string;
-      value: string;
-    };
-    transform?: {
-      position: number[];
-      rotation: number[];
-      scale: number[];
-    };
-    tags?: string[];
-    metadata?: Record<string, any>;
-  }>;
+  objects?: ManifestObject[];
   environment?: {
     skybox?: string;
     fog?: { enabled: boolean; density?: number };
@@ -57,10 +60,10 @@ export interface Swim26ManifestData {
     bounds: { min: [number, number, number]; max: [number, number, number] };
   }>;
   authoredContent?: {
-    sceneInfo?: any;
-    objects?: any[];
-    environment?: any;
-    paths?: any[];
+    sceneInfo?: Swim26ManifestData['sceneInfo'];
+    objects?: ManifestObject[];
+    environment?: UnknownRecord;
+    paths?: Swim26ManifestData['paths'];
   };
 }
 
@@ -71,7 +74,7 @@ export interface AssetReference {
   url: string;
   name: string;
   type?: 'model' | 'texture' | 'environment';
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 /**
@@ -85,12 +88,12 @@ export interface LoadedSceneData {
     id: string;
     name: string;
     assetRef?: { type: string; value: string };
-    transform?: any;
+    transform?: ManifestObject['transform'];
     tags?: string[];
   }>;
   assets: AssetReference[];
-  environment?: any;
-  paths?: any[];
+  environment?: unknown;
+  paths?: Swim26ManifestData['paths'];
   metadata: ProjectMetadataProbe;
 }
 
@@ -114,13 +117,14 @@ export const loadSwim26Manifest = (
   const errors: ManifestLoaderError[] = [];
 
   try {
-    const data = JSON.parse(fileContent.content) as any;
+    const data = JSON.parse(fileContent.content) as UnknownRecord;
 
     // Basic validation
-    if (!data.type || !data.type.includes('swim26')) {
+    const manifestType = typeof data.type === 'string' ? data.type : undefined;
+    if (!manifestType || !manifestType.includes('swim26')) {
       errors.push({
         type: 'INVALID_STRUCTURE',
-        message: `Invalid manifest type: "${data.type}". Expected "swim26.scene-manifest" or similar.`,
+        message: `Invalid manifest type: "${String(data.type)}". Expected "swim26.scene-manifest" or similar.`,
         path: fileContent.path,
       });
     }
@@ -139,7 +143,7 @@ export const loadSwim26Manifest = (
       });
     }
 
-    return { data: data as Swim26ManifestData, errors };
+    return { data: data as unknown as Swim26ManifestData, errors };
   } catch (error) {
     errors.push({
       type: 'INVALID_JSON',
@@ -155,11 +159,11 @@ export const loadSwim26Manifest = (
  */
 export const loadBabylonConfig = (
   fileContent: GitHubFileContent
-): { data: any; errors: ManifestLoaderError[] } => {
+): { data: UnknownRecord | null; errors: ManifestLoaderError[] } => {
   const errors: ManifestLoaderError[] = [];
 
   try {
-    const data = JSON.parse(fileContent.content) as any;
+    const data = JSON.parse(fileContent.content) as UnknownRecord;
     return { data, errors };
   } catch (error) {
     errors.push({
@@ -176,11 +180,11 @@ export const loadBabylonConfig = (
  */
 export const loadSwim26Config = (
   fileContent: GitHubFileContent
-): { data: any; errors: ManifestLoaderError[] } => {
+): { data: UnknownRecord | null; errors: ManifestLoaderError[] } => {
   const errors: ManifestLoaderError[] = [];
 
   try {
-    const data = JSON.parse(fileContent.content) as any;
+    const data = JSON.parse(fileContent.content) as UnknownRecord;
     return { data, errors };
   } catch (error) {
     errors.push({
@@ -214,10 +218,11 @@ export const extractAssetReferences = (manifest: Swim26ManifestData): AssetRefer
   }
 
   // Extract from environment
-  const env = manifest.authoredContent?.environment || manifest.environment;
-  if (env?.skybox) {
+  const env = (manifest.authoredContent?.environment || manifest.environment) as UnknownRecord | undefined;
+  const skybox = typeof env?.skybox === 'string' ? env.skybox : undefined;
+  if (skybox) {
     assets.push({
-      url: env.skybox,
+      url: skybox,
       name: 'Environment Skybox',
       type: 'environment',
     });
@@ -254,28 +259,28 @@ export const extractSceneInfo = (
 /**
  * Extract objects from manifest
  */
-export const extractObjects = (manifest: Swim26ManifestData): any[] => {
+export const extractObjects = (manifest: Swim26ManifestData): ManifestObject[] => {
   return manifest.authoredContent?.objects || manifest.objects || [];
 };
 
 /**
  * Extract environment settings
  */
-export const extractEnvironment = (manifest: Swim26ManifestData): any => {
+export const extractEnvironment = (manifest: Swim26ManifestData): UnknownRecord | undefined => {
   return manifest.authoredContent?.environment || manifest.environment;
 };
 
 /**
  * Extract paths from manifest
  */
-export const extractPaths = (manifest: Swim26ManifestData): any[] => {
+export const extractPaths = (manifest: Swim26ManifestData): Swim26ManifestData['paths'] => {
   return manifest.authoredContent?.paths || manifest.paths || [];
 };
 
 /**
  * Extract collision zones
  */
-export const extractCollisionZones = (manifest: Swim26ManifestData): any[] => {
+export const extractCollisionZones = (manifest: Swim26ManifestData): NonNullable<Swim26ManifestData['collisionZones']> => {
   return manifest.collisionZones || [];
 };
 
@@ -297,7 +302,7 @@ export const buildSceneDataFromManifest = (
     description: sceneInfo.description,
     version: sceneInfo.version,
     objects: objects.map(obj => ({
-      id: obj.id || obj.authoredId,
+      id: obj.id || obj.authoredId || 'unknown-imported-id',
       name: obj.name,
       assetRef: obj.assetRef,
       transform: obj.transform,
@@ -387,6 +392,9 @@ export const validateManifest = (manifest: Swim26ManifestData): {
 /**
  * Safely extract a value from potentially missing nested structures
  */
-const safeGet = (obj: any, path: string[]): any => {
-  return path.reduce((current, key) => current?.[key], obj);
+const safeGet = (obj: unknown, path: string[]): unknown => {
+  return path.reduce<unknown>((current, key) => {
+    if (!current || typeof current !== 'object') return undefined;
+    return (current as UnknownRecord)[key];
+  }, obj);
 };

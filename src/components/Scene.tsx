@@ -87,6 +87,17 @@ export default function Scene({
 }: SceneProps) {
   const [isTransforming, setIsTransforming] = useState(false);
   const [useCustomGizmo, setUseCustomGizmo] = useState(false);
+  const cameraConfig = useMemo(() => ({ position: [50, 50, 50] as [number, number, number], fov: 45, near: 0.1, far: 2000 }), []);
+  const glConfig = useMemo(() => ({
+    antialias: true,
+    preserveDrawingBuffer: true,
+    toneMapping: environment.toneMapping === 'None' ? THREE.NoToneMapping :
+      environment.toneMapping === 'Linear' ? THREE.LinearToneMapping :
+        environment.toneMapping === 'Reinhard' ? THREE.ReinhardToneMapping :
+          environment.toneMapping === 'Cineon' ? THREE.CineonToneMapping :
+            THREE.ACESFilmicToneMapping,
+    toneMappingExposure: environment.exposure,
+  }), [environment.exposure, environment.toneMapping]);
 
   const visibleModels = useMemo(() => {
     return models.filter(model => {
@@ -110,17 +121,8 @@ export default function Scene({
       </div>
       <Canvas
         shadows
-        camera={{ position: [50, 50, 50], fov: 45, near: 0.1, far: 2000 }}
-        gl={{
-          antialias: true,
-          preserveDrawingBuffer: true,
-          toneMapping: environment.toneMapping === 'None' ? THREE.NoToneMapping :
-            environment.toneMapping === 'Linear' ? THREE.LinearToneMapping :
-              environment.toneMapping === 'Reinhard' ? THREE.ReinhardToneMapping :
-                environment.toneMapping === 'Cineon' ? THREE.CineonToneMapping :
-                  THREE.ACESFilmicToneMapping,
-          toneMappingExposure: environment.exposure
-        }}
+        camera={cameraConfig}
+        gl={glConfig}
         onCreated={({ scene }) => {
           if (onSceneReady) onSceneReady(scene);
         }}

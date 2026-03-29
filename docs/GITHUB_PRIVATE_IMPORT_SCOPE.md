@@ -21,6 +21,13 @@ This document defines exactly what Titan supports for private GitHub repository 
 - Token is **not** persisted into project session payloads or export artifacts.
 - Token is not included in connector error contexts.
 
+## Import boundaries (preserved)
+
+Titan imports only builder-relevant supported files (manifest/config/package
+metadata and similar scene-import inputs). Titan intentionally does **not**
+import gameplay scripts, runtime boot code, networking/state logic, or other
+arbitrary source files outside builder scope.
+
 ## Not supported in this phase
 
 - OAuth device flow / account linking.
@@ -32,3 +39,4 @@ This document defines exactly what Titan supports for private GitHub repository 
 - Public import path remains unchanged.
 - Private import reuses the same prepare/import/activation path as public import once access succeeds.
 - Auth errors are presented with recovery-oriented messages instead of raw connector enum text.
+- Repo input, branch, and folder path remain available across auth failures so users can retry without rebuilding context.

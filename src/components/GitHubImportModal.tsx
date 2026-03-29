@@ -8,16 +8,18 @@
  * <GitHubImportModal isOpen={true} onImportComplete={handleSession} onClose={close} />
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useGitHubImport, getPhaseMessage } from '../hooks/useGitHubImport';
 import { ProjectSession } from '../types/projectSession';
 import { getFormattedHistory, getRecentImportUrls } from '../services/ImportHistoryService';
 import { parseGitHubReference } from '../services/GitHubConnector';
+import { ImportPreparationResult } from '../services/GitHubRepoImporter';
+import { LoadedSceneData } from '../services/Swim26ManifestLoader';
 
 interface GitHubImportModalProps {
   isOpen: boolean;
   initialRepoInput?: string;
-  onImportComplete?: (importData: ProjectSession, sceneData?: any) => void;
+  onImportComplete?: (importData: ProjectSession, sceneData?: LoadedSceneData) => void;
   onClose?: () => void;
 }
 
@@ -31,9 +33,13 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
   const [branchInput, setBranchInput] = useState('');
   const [subpathInput, setSubpathInput] = useState('');
   const [authToken, setAuthToken] = useState('');
-  const [detectionPreview, setDetectionPreview] = useState<any>(null);
+  const [detectionPreview, setDetectionPreview] = useState<ImportPreparationResult | null>(null);
   const [confirmationMode, setConfirmationMode] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const pendingAuthTokenRef = useRef<string | undefined>(undefined);
+
+  const normalizedAuthToken = authToken.trim();
+  const hasAuthToken = normalizedAuthToken.length > 0;
 
   const {
     progress,
@@ -80,15 +86,32 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
   const handlePrepareImport = async () => {
     if (!repoInput.trim()) return;
 
-    const preparation = await prepareImport(buildReferenceInput(), authToken || undefined);
+    const referenceInput = buildReferenceInput();
+    const shouldSkipConfirmation = !branchInput.trim() && !subpathInput.trim() && !hasAuthToken;
+
+    if (shouldSkipConfirmation) {
+      pendingAuthTokenRef.current = undefined;
+      await importRepository(referenceInput);
+      return;
+    }
+
+    pendingAuthTokenRef.current = hasAuthToken ? normalizedAuthToken : undefined;
+    const preparation = await prepareImport(referenceInput, pendingAuthTokenRef.current);
     if (preparation) {
       setDetectionPreview(preparation);
       setConfirmationMode(true);
     }
+    setAuthToken('');
   };
 
   const handleConfirmImport = async () => {
-    await importRepository(buildReferenceInput(), detectionPreview?.guidance?.options?.[0]?.profileId, authToken || undefined);
+    const importToken = hasAuthToken ? normalizedAuthToken : pendingAuthTokenRef.current;
+    await importRepository(
+      buildReferenceInput(),
+      detectionPreview?.guidance?.options?.[0]?.profileId,
+      importToken
+    );
+    setAuthToken('');
   };
 
   const handleClose = () => {
@@ -97,6 +120,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
     setBranchInput('');
     setSubpathInput('');
     setAuthToken('');
+    pendingAuthTokenRef.current = undefined;
     setConfirmationMode(false);
     setDetectionPreview(null);
     onClose?.();
@@ -173,7 +197,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   )}
                 </div>
                 <p className="mt-2 text-xs text-gray-500">
-                  Public repositories work out of the box. For private repositories, add a read-only token below.
+                  Public repositories import directly. If the repo is private, add a read-only token below.
                 </p>
               </div>
 
@@ -223,7 +247,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
               {/* Error Display */}
               {error && (
                 <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm font-medium text-red-900">Error</p>
+                  <p className="text-sm font-medium text-red-900">Couldn’t start import</p>
                   <p className="text-sm text-red-700 mt-1">{error}</p>
                 </div>
               )}
@@ -255,7 +279,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   disabled={!repoInput.trim() || isLoading}
                 >
-                  Continue
+                  {!branchInput.trim() && !subpathInput.trim() && !hasAuthToken ? 'Import Project' : 'Continue'}
                 </button>
               </div>
             </div>
@@ -265,29 +289,29 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
           {confirmationMode && detectionPreview && !result && (
             <div className="space-y-4">
               <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm font-medium text-blue-900">Repository Detected</p>
+                <p className="text-sm font-medium text-blue-900">Repository checked</p>
                 <p className="text-sm text-blue-700 mt-1">
                   {detectionPreview.detection?.isSWIM26
-                    ? '✓ This looks like a SWIM26 Babylon project'
-                    : 'This repository will be imported as a Generic Titan Scene'}
+                    ? 'This looks like a SWIM26 Babylon project and is ready to import.'
+                    : 'This repo can be imported as a standard Titan scene.'}
                 </p>
               </div>
 
               {/* Import Preview */}
               <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                <p className="text-sm font-medium text-gray-700 mb-2">What will be imported:</p>
+                <p className="text-sm font-medium text-gray-700 mb-2">What Titan imports</p>
                 <ul className="text-xs text-gray-600 space-y-1">
-                  <li>✓ Project metadata and supported manifest/config files</li>
-                  <li>✓ Scene objects, asset references, environment, camera/path metadata</li>
-                  <li className="text-red-600">✗ Gameplay scripts, runtime boot code, networking logic</li>
-                  <li className="text-red-600">✗ Arbitrary source files outside Titan builder scope</li>
+                  <li>✓ Project metadata plus supported manifest/config files</li>
+                  <li>✓ Scene objects, asset references, environment, and camera/path data</li>
+                  <li className="text-red-600">✗ Runtime/gameplay code (scripts, boot code, networking)</li>
+                  <li className="text-red-600">✗ Source files outside Titan’s builder scope</li>
                 </ul>
               </div>
 
               {/* Errors/Warnings */}
               {detectionPreview.errors && detectionPreview.errors.length > 0 && (
                 <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm font-medium text-yellow-900 mb-2">Issues found:</p>
+                  <p className="text-sm font-medium text-yellow-900 mb-2">Fix before import</p>
                   <ul className="text-xs text-yellow-700 space-y-1">
                     {detectionPreview.errors.map((err: string, idx: number) => (
                       <li key={idx}>• {err}</li>
@@ -316,7 +340,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
               {/* Warnings */}
               {detectionPreview.warnings && detectionPreview.warnings.length > 0 && (
                 <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm font-medium text-blue-900 mb-2">Notes:</p>
+                  <p className="text-sm font-medium text-blue-900 mb-2">Heads up</p>
                   <ul className="text-xs text-blue-700 space-y-1">
                     {detectionPreview.warnings.map((warn: string, idx: number) => (
                       <li key={idx}>• {warn}</li>
@@ -331,6 +355,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   onClick={() => {
                     setConfirmationMode(false);
                     setDetectionPreview(null);
+                    pendingAuthTokenRef.current = undefined;
                   }}
                   className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
                   disabled={isLoading}
@@ -345,6 +370,16 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   {isLoading ? 'Importing...' : 'Import Project'}
                 </button>
               </div>
+
+              {error && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <p className="text-sm font-medium text-red-900">Import failed</p>
+                  <p className="text-sm text-red-700 mt-1">{error}</p>
+                  <p className="text-xs text-red-700 mt-2">
+                    Next step: go back, update branch/path or paste a fresh read-only token, then retry.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
@@ -352,14 +387,14 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
           {result && (
             <div className="space-y-4">
               <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-lg font-semibold text-green-900">✓ Import Successful!</p>
+                <p className="text-lg font-semibold text-green-900">✓ Import complete</p>
                 <p className="text-sm text-green-700 mt-2">
-                  Imported from: {result.sourceRepo}
+                  Connected to {result.sourceRepo}
                 </p>
               </div>
 
               <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                <p className="text-sm font-medium text-gray-700 mb-2">Imported Files:</p>
+                <p className="text-sm font-medium text-gray-700 mb-2">Imported files</p>
                 <ul className="text-xs text-gray-600 space-y-1">
                   {result.importedFiles.map((file) => (
                     <li key={file} className="flex items-center gap-2">
@@ -371,7 +406,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
 
               {result.warnings && result.warnings.length > 0 && (
                 <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm font-medium text-yellow-900 mb-2">Warnings:</p>
+                  <p className="text-sm font-medium text-yellow-900 mb-2">Review after import</p>
                   <ul className="text-xs text-yellow-700 space-y-1">
                     {result.warnings.map((warn, idx) => (
                       <li key={idx}>• {warn}</li>

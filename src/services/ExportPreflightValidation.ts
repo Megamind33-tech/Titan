@@ -47,10 +47,34 @@ export interface PreflightReport {
   recommendations: string[]; // actionable suggestions
 }
 
+type ExportModelLike = {
+  id?: string;
+  name?: string;
+  type?: string;
+  position?: unknown;
+  rotation?: unknown;
+  scale?: unknown;
+  layerId?: string;
+  parentId?: string | null;
+  colorTint?: unknown;
+  opacity?: unknown;
+  roughness?: unknown;
+  metalness?: unknown;
+  file?: unknown;
+};
+
+type LayerLike = { id?: string; name?: string };
+type PrefabLike = { id?: string; models?: unknown };
+type PathLike = { id?: string; width?: number; points?: unknown[] };
+type CollisionZoneLike = { id?: string; shape?: string; scale?: number[] };
+type CameraPresetLike = { id?: string; type?: string; fov?: number };
+type ThreeNodeLike = { userData?: { id?: string } };
+type ThreeSceneLike = { traverse: (callback: (child: ThreeNodeLike) => void) => void };
+
 /**
  * Validate model data completeness and validity.
  */
-export const validateModelData = (model: any, context: string): ValidationIssue[] => {
+export const validateModelData = (model: ExportModelLike, context: string): ValidationIssue[] => {
   const issues: ValidationIssue[] = [];
 
   // Check ID validity
@@ -157,7 +181,7 @@ export const validateModelData = (model: any, context: string): ValidationIssue[
 
   // Check type validity
   const validTypes = ['model', 'environment', 'light', 'camera'];
-  if (model.type && !validTypes.includes(model.type)) {
+  if (typeof model.type === 'string' && !validTypes.includes(model.type)) {
     issues.push({
       severity: 'warning',
       code: 'UNKNOWN_MODEL_TYPE',
@@ -172,7 +196,7 @@ export const validateModelData = (model: any, context: string): ValidationIssue[
 /**
  * Validate material references and values.
  */
-export const validateMaterialData = (model: any, context: string): ValidationIssue[] => {
+export const validateMaterialData = (model: ExportModelLike, context: string): ValidationIssue[] => {
   const issues: ValidationIssue[] = [];
 
   // Check material color if present
@@ -239,8 +263,8 @@ export const validateMaterialData = (model: any, context: string): ValidationIss
  * Validate layer references exist.
  */
 export const validateLayerReferences = (
-  models: any[],
-  layers: any[] | undefined,
+  models: ExportModelLike[],
+  layers: LayerLike[] | undefined,
   context: string
 ): ValidationIssue[] => {
   const issues: ValidationIssue[] = [];
@@ -249,10 +273,10 @@ export const validateLayerReferences = (
     return issues; // Layers optional
   }
 
-  const layerIds = new Set(layers.map((l: any) => l.id));
+  const layerIds = new Set(layers.map(l => l.id).filter((id): id is string => typeof id === 'string'));
 
   for (const model of models) {
-    if (model.layerId && !layerIds.has(model.layerId)) {
+    if (typeof model.layerId === 'string' && !layerIds.has(model.layerId)) {
       issues.push({
         severity: 'warning',
         code: 'MISSING_LAYER_REFERENCE',
@@ -272,12 +296,12 @@ export const validateLayerReferences = (
 /**
  * Validate parent-child relationships.
  */
-export const validateHierarchy = (models: any[], context: string): ValidationIssue[] => {
+export const validateHierarchy = (models: ExportModelLike[], context: string): ValidationIssue[] => {
   const issues: ValidationIssue[] = [];
-  const modelIds = new Set(models.map((m: any) => m.id));
+  const modelIds = new Set(models.map(m => m.id).filter((id): id is string => typeof id === 'string'));
 
   for (const model of models) {
-    if (model.parentId && !modelIds.has(model.parentId)) {
+    if (typeof model.parentId === 'string' && !modelIds.has(model.parentId)) {
       issues.push({
         severity: 'warning',
         code: 'MISSING_PARENT_REFERENCE',
@@ -298,7 +322,7 @@ export const validateHierarchy = (models: any[], context: string): ValidationIss
  * Validate prefab model references.
  */
 export const validatePrefabReferences = (
-  prefabs: any[] | undefined,
+  prefabs: PrefabLike[] | undefined,
   modelIds: Set<string>,
   context: string
 ): ValidationIssue[] => {
@@ -317,8 +341,8 @@ export const validatePrefabReferences = (
       continue;
     }
 
-    for (const model of prefab.models) {
-      if (!modelIds.has(model.id)) {
+    for (const model of prefab.models as Array<{ id?: string }>) {
+      if (typeof model.id !== 'string' || !modelIds.has(model.id)) {
         issues.push({
           severity: 'warning',
           code: 'MISSING_PREFAB_MODEL_REFERENCE',
@@ -339,7 +363,7 @@ export const validatePrefabReferences = (
 /**
  * Validate export file availability (for original format exports).
  */
-export const validateFileAvailability = (models: any[], format: string, context: string): ValidationIssue[] => {
+export const validateFileAvailability = (models: ExportModelLike[], format: string, context: string): ValidationIssue[] => {
   const issues: ValidationIssue[] = [];
 
   if (format !== 'original') return issues;
@@ -366,24 +390,24 @@ export const validateFileAvailability = (models: any[], format: string, context:
  * Comprehensive preflight validation.
  */
 export const runPreflightValidation = (
-  models: any[],
+  models: ExportModelLike[],
   selectedIds: string[],
   options: {
     format: string;
-    layers?: any[];
-    prefabs?: any[];
-    paths?: any[];
-    collisionZones?: any[];
-    terrain?: any;
-    cameraPresets?: any[];
-    cameraPaths?: any[];
-    qualitySettings?: any;
-    threeScene?: any;
+    layers?: LayerLike[];
+    prefabs?: PrefabLike[];
+    paths?: PathLike[];
+    collisionZones?: CollisionZoneLike[];
+    terrain?: unknown;
+    cameraPresets?: CameraPresetLike[];
+    cameraPaths?: unknown[];
+    qualitySettings?: unknown;
+    threeScene?: ThreeSceneLike | null;
   }
 ): PreflightReport => {
   const issues: ValidationIssue[] = [];
-  const modelsToExport = models.filter(m => selectedIds.includes(m.id));
-  const modelIds = new Set(modelsToExport.map(m => m.id));
+  const modelsToExport = models.filter(m => typeof m.id === 'string' && selectedIds.includes(m.id));
+  const modelIds = new Set(modelsToExport.map(m => m.id as string));
   const blockedItems = new Set<string>();
   const degradedItems = new Set<string>();
 
@@ -410,17 +434,18 @@ export const runPreflightValidation = (
 
   // Validate each model
   for (const model of modelsToExport) {
+    const modelId = model.id as string;
     const modelIssues = [
-      ...validateModelData(model, `Model "${model.id}"`),
-      ...validateMaterialData(model, `Model "${model.id}"`),
+      ...validateModelData(model, `Model "${modelId}"`),
+      ...validateMaterialData(model, `Model "${modelId}"`),
     ];
 
     for (const issue of modelIssues) {
       issues.push(issue);
       if (issue.severity === 'blocking-error') {
-        blockedItems.add(model.id);
+        blockedItems.add(modelId);
       } else {
-        degradedItems.add(model.id);
+        degradedItems.add(modelId);
       }
     }
   }
@@ -477,7 +502,7 @@ export const runPreflightValidation = (
           context: { itemId: zone.id },
         });
       }
-      if (!['box', 'cylinder', 'sphere'].includes(zone.shape)) {
+      if (!zone.shape || !['box', 'cylinder', 'sphere'].includes(zone.shape)) {
         issues.push({
           severity: 'warning',
           code: 'INVALID_ZONE_SHAPE',
@@ -506,7 +531,7 @@ export const runPreflightValidation = (
           context: { itemId: preset.id },
         });
       }
-      if (!['perspective', 'orthographic'].includes(preset.type)) {
+      if (!preset.type || !['perspective', 'orthographic'].includes(preset.type)) {
         issues.push({
           severity: 'warning',
           code: 'INVALID_CAMERA_PRESET_TYPE',
@@ -514,7 +539,7 @@ export const runPreflightValidation = (
           context: { itemId: preset.id, field: 'type' },
         });
       }
-      if (preset.type === 'perspective' && preset.fov && (preset.fov < 0 || preset.fov > 180)) {
+      if (preset.type === 'perspective' && typeof preset.fov === 'number' && (preset.fov < 0 || preset.fov > 180)) {
         issues.push({
           severity: 'warning',
           code: 'INVALID_CAMERA_FOV',
@@ -528,19 +553,20 @@ export const runPreflightValidation = (
   // Validate Three.js scene sync (optional check)
   if (options.threeScene) {
     for (const model of modelsToExport) {
+      const modelId = model.id as string;
       let found = false;
-      options.threeScene.traverse((child: any) => {
-        if (child.userData?.id === model.id) {
+      options.threeScene.traverse((child: ThreeNodeLike) => {
+        if (child.userData?.id === modelId) {
           found = true;
         }
       });
       if (!found) {
-        degradedItems.add(model.id);
+        degradedItems.add(modelId);
         issues.push({
           severity: 'warning',
           code: 'SCENE_SYNC_MISMATCH',
-          message: `Model "${model.id}" not found in Three.js scene (geometry will not be exported)`,
-          context: { modelId: model.id },
+          message: `Model "${modelId}" not found in Three.js scene (geometry will not be exported)`,
+          context: { modelId },
           recovery: {
             action: 'inform-user',
             description: 'Ensure model is added to scene before export',

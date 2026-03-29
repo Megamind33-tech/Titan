@@ -32,7 +32,7 @@ export default function ProjectOnboardingModal({
         <div>
           <h2 className="text-white font-mono text-sm tracking-widest uppercase">WELCOME TO TITAN</h2>
           <p className="text-white/60 text-xs mt-2">
-            Choose your project path. If you are building SWIM26, start with the Babylon runtime option.
+            Start a new project or continue where you left off. Building for SWIM26? Pick the Babylon profile to get the recommended setup.
           </p>
         </div>
 
@@ -69,7 +69,7 @@ export default function ProjectOnboardingModal({
               onClick={onOpenExisting}
               className="text-xs text-white/60 hover:text-white border border-white/10 rounded px-3 py-2"
             >
-              OPEN LAST PROJECT
+              CONTINUE LAST PROJECT
             </button>
             <button
               onClick={onImportFromGitHub}

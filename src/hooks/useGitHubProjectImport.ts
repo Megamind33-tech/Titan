@@ -8,15 +8,21 @@ import {
   loadImportedPaths,
 } from '../services/ImportedSceneLoader';
 import { LoadedSceneData } from '../services/Swim26ManifestLoader';
-import { EnvironmentPreset } from '../types/environment';
+import { EnvironmentPreset, DEFAULT_ENVIRONMENT } from '../types/environment';
+import { CameraPath } from '../types/camera';
+import { ModelData } from '../App';
+
+interface ImportedSceneStatePayload {
+  models: ModelData[];
+  environment: EnvironmentPreset;
+  cameraPaths: CameraPath[];
+}
 
 interface UseGitHubProjectImportArgs {
-  environment: EnvironmentPreset;
   onActivateSession: (session: ProjectSession) => void;
   setShowOnboarding: (show: boolean) => void;
-  setModels: (updater: any) => void;
-  setEnvironment: (updater: any) => void;
-  setCameraPaths: (updater: any) => void;
+  applyImportedSceneState: (payload: ImportedSceneStatePayload) => void;
+  clearSelection: () => void;
   closeModal: () => void;
 }
 
@@ -29,12 +35,10 @@ export const extractGitHubImportHistoryEntry = (rootPath: string): { owner: stri
 };
 
 export const useGitHubProjectImport = ({
-  environment,
   onActivateSession,
   setShowOnboarding,
-  setModels,
-  setEnvironment,
-  setCameraPaths,
+  applyImportedSceneState,
+  clearSelection,
   closeModal,
 }: UseGitHubProjectImportArgs) => {
   return useCallback(async (importedSession: ProjectSession, sceneData?: LoadedSceneData) => {
@@ -45,23 +49,39 @@ export const useGitHubProjectImport = ({
         addToImportHistory(importHistoryEntry.owner, importHistoryEntry.repo, importedSession.projectName);
       }
 
-      onActivateSession(importedSession);
-      setShowOnboarding(false);
-
+      let importedModels: ModelData[] = [];
+      let importedEnvironment: EnvironmentPreset = DEFAULT_ENVIRONMENT;
+      let importedPaths: CameraPath[] = [];
+      let summary: ReturnType<typeof createImportSummary> | null = null;
       if (sceneData) {
         try {
-          const importedObjects = loadImportedObjects(sceneData);
-          const importedEnvironment = loadImportedEnvironment(sceneData, environment);
-          const importedPaths = loadImportedPaths(sceneData);
+          importedModels = loadImportedObjects(sceneData);
+          importedEnvironment = loadImportedEnvironment(sceneData, DEFAULT_ENVIRONMENT);
+          importedPaths = loadImportedPaths(sceneData);
+          summary = createImportSummary(sceneData, importedSession.metadata.rootPath || 'unknown');
+        } catch (sceneError) {
+          console.warn('[GitHub Import] Could not load scene data:', sceneError);
+        }
+      }
 
-          setModels(importedObjects);
-          setEnvironment(importedEnvironment);
-          setCameraPaths(importedPaths);
+      onActivateSession(importedSession);
 
-          const summary = createImportSummary(sceneData, importedSession.metadata.rootPath || 'unknown');
+      if (sceneData) {
+        applyImportedSceneState({
+          models: importedModels,
+          environment: importedEnvironment,
+          cameraPaths: importedPaths,
+        });
+        clearSelection();
+      }
+      setShowOnboarding(false);
+
+      if (summary) {
           console.log('[GitHub Import] Scene data loaded:', {
             projectName: summary.projectName,
             objects: summary.objectCount,
+            previewReadyObjects: summary.previewReadyObjectCount,
+            unresolvedObjects: summary.unresolvedObjectCount,
             assets: summary.assetCount,
             paths: summary.pathCount,
             warnings: summary.warnings,
@@ -70,9 +90,6 @@ export const useGitHubProjectImport = ({
           if (summary.warnings.length > 0) {
             console.warn('[GitHub Import] Warnings:', summary.warnings);
           }
-        } catch (sceneError) {
-          console.warn('[GitHub Import] Could not load scene data:', sceneError);
-        }
       }
 
       closeModal();
@@ -80,5 +97,5 @@ export const useGitHubProjectImport = ({
     } catch (error) {
       console.error('[GitHub Import] Error handling import completion:', error);
     }
-  }, [closeModal, environment, onActivateSession, setCameraPaths, setEnvironment, setModels, setShowOnboarding]);
+  }, [applyImportedSceneState, clearSelection, closeModal, onActivateSession, setShowOnboarding]);
 };

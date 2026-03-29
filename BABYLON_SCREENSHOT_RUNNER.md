@@ -9,8 +9,11 @@ using headless Chromium via Puppeteer.
 ## What this is
 
 `tools/babylon-screenshot-runner/runner.js` is the external executable that
-Titan's regression service invokes via the `SWIM26_REAL_SCREENSHOT_CMD`
-environment variable.
+Titan's regression service invokes via canonical env wiring:
+
+1. `SWIM26_REAL_SCREENSHOT_CMD_JSON` (preferred)
+2. `SWIM26_REAL_SCREENSHOT_BIN` + `SWIM26_REAL_SCREENSHOT_ARGS_JSON`
+3. `SWIM26_REAL_SCREENSHOT_CMD` (legacy fallback)
 
 It:
 1. Accepts `--manifest`, `--output`, and `--metadata` CLI arguments
@@ -72,7 +75,8 @@ node runner.js --manifest <path> --output <png path> --metadata <json path>
 ### Blocked environment signal
 
 Exit code `3` with stderr prefixed `BLOCKED_ENV:` means the runner is not
-installed or the environment cannot execute it. Titan's regression service
+installed or the environment cannot execute it (including missing Chromium
+system libraries). Titan's regression service
 reports this as `blocked: true` in the diff artifact, which is **distinct**
 from a real screenshot regression failure.
 
@@ -229,9 +233,17 @@ Run `npm run baselines:generate` locally, review, and commit the PNGs.
 | Screenshot file not written | 1 | stderr: `RENDER_ERROR: ...output file was not written` |
 | Metadata not emitted | 1 | stderr: `RENDER_ERROR: Renderer did not produce metadata` |
 
-Blocked failures (`exit 3`) are always distinguishable from render failures
-(`exit 1`) in Titan's diff JSON: `screenshot.blocked` is `true` only for
-non-zero runner exits.
+Titan emits explicit failure classes in diff JSON:
+
+| failureClass | Meaning |
+|---|---|
+| `blocked_environment` | runner could not run in this environment (exit 3 / `BLOCKED_ENV`) |
+| `setup_failure` | command wiring / spawn setup failed before reliable runner execution |
+| `runner_execution_failure` | runner executed but failed (exit 1, no output, etc.) |
+| `host_verification_failure` | engine-loader host evidence failed |
+| `baseline_missing` | baseline PNG unavailable |
+| `screenshot_parity_failure` | baseline comparison failed threshold |
+| `none` | end-to-end pass |
 
 ---
 
