@@ -6,12 +6,20 @@ import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { ModelData } from '../App';
 import { SceneSettings, CameraSettings } from './storageUtils';
 import { Layer } from '../types/layers';
+import { Prefab } from '../types/prefabs';
+import { Path } from '../types/paths';
+import { CollisionZone } from '../types/collision';
+import { TerrainData } from '../types/terrain';
+import { CameraPreset, CameraPath } from '../types/camera';
+import { QualitySettings } from '../types/quality';
 import {
   preflightValidation,
   validateExportManifest,
   StrictExportAssetManifest,
   StrictSceneExportManifest,
   StrictMaterialProperties,
+  StrictMaterialMaps,
+  StrictMaterialUVTransform,
 } from '../services/ExportManifestValidation';
 
 /**
@@ -33,8 +41,17 @@ export interface ExportOptions {
   format: 'original' | 'glb' | 'obj';
   includeTextures: boolean;
   includeMaterials: boolean;
+  // Phase 2: Scene metadata
   cameraSettings?: CameraSettings;
   layers?: Layer[];
+  // Phase 3: Extended content systems
+  prefabs?: Prefab[];
+  paths?: Path[];
+  collisionZones?: CollisionZone[];
+  terrain?: TerrainData;
+  cameraPresets?: CameraPreset[];
+  cameraPaths?: CameraPath[];
+  qualitySettings?: QualitySettings;
 }
 
 /**
@@ -149,6 +166,23 @@ export const exportScene = async (
         presetName: model.material?.name,
       };
 
+      // Phase 3: Build material texture maps (if available)
+      const materialMaps: StrictMaterialMaps | undefined = (
+        model.normalMapUrl || model.normalMapFile
+      ) ? {
+        normalMap: model.normalMapUrl || undefined,
+      } : undefined;
+
+      // Phase 3: Build UV transform (if available)
+      const uvTransform = model.material ? {
+        tiling: model.material.tiling || [1, 1],
+        offset: model.material.offset || [0, 0],
+        rotation: model.material.rotation || 0,
+      } as StrictMaterialUVTransform : undefined;
+
+      // Phase 3: Export behavior tags and classification
+      const childrenOfModel = modelsToExport.filter(m => m.parentId === model.id);
+
       // Add asset to manifest
       assets.push({
         id: model.id,
@@ -164,8 +198,13 @@ export const exportScene = async (
           scale: model.scale,
         },
         material,
+        materialMaps,
+        uvTransform,
+        behaviorTags: model.behaviorTags,
+        classification: model.classification,
         metadata: {},
         parent: model.parentId || null,
+        childrenIds: childrenOfModel.length > 0 ? childrenOfModel.map(m => m.id) : undefined,
         version: 2,
       });
     }
@@ -174,6 +213,75 @@ export const exportScene = async (
     const exportSensitiveModelIds = modelsToExport
       .filter(m => (m.behaviorTags || []).includes('Export-Sensitive'))
       .map(m => m.id);
+
+    // Phase 3: Build scene systems for export
+    // Convert prefabs to export format if provided
+    const exportPrefabs = options.prefabs?.map(p => ({
+      id: p.id,
+      name: p.name,
+      category: p.category,
+      modelIds: p.models.map(m => m.id),
+      metadata: p.metadata,
+    }));
+
+    // Convert paths to export format if provided
+    const exportPaths = options.paths?.map(p => ({
+      id: p.id,
+      name: p.name,
+      type: p.type,
+      closed: p.closed,
+      width: p.width,
+      points: p.points.map(pt => ({
+        id: pt.id,
+        position: pt.position,
+      })),
+      materialId: p.materialId,
+    }));
+
+    // Convert collision zones to export format if provided
+    const exportZones = options.collisionZones?.map(z => ({
+      id: z.id,
+      name: z.name,
+      type: z.type,
+      enabled: z.enabled,
+      position: z.position,
+      rotation: z.rotation,
+      scale: z.scale,
+      shape: z.shape,
+      allowedTags: z.allowedTags,
+      blockedTags: z.blockedTags,
+      color: z.color,
+      exportToRuntime: z.exportToRuntime,
+    }));
+
+    // Export terrain if provided
+    const exportTerrain = options.terrain;
+
+    // Convert camera presets to export format if provided
+    const exportCameraPresets = options.cameraPresets?.map(c => ({
+      id: c.id,
+      name: c.name,
+      type: c.type,
+      position: c.position,
+      rotation: c.rotation,
+      target: c.target,
+      fov: c.fov,
+      zoom: c.zoom,
+      near: c.near,
+      far: c.far,
+    }));
+
+    // Convert camera paths to export format if provided
+    const exportCameraPaths = options.cameraPaths?.map(p => ({
+      id: p.id,
+      name: p.name,
+      points: p.points,
+      loop: p.loop,
+      interpolation: p.interpolation,
+    }));
+
+    // Export quality settings if provided
+    const exportQuality = options.qualitySettings;
 
     // Build complete manifest
     const manifest: StrictSceneExportManifest = {
@@ -203,6 +311,14 @@ export const exportScene = async (
         layers: options.layers,
       },
       assets,
+      // Phase 3: Extended content systems
+      prefabs: exportPrefabs,
+      paths: exportPaths,
+      collisionZones: exportZones,
+      terrain: exportTerrain,
+      cameraPresets: exportCameraPresets,
+      cameraPaths: exportCameraPaths,
+      qualitySettings: exportQuality,
       exportSensitiveModels: exportSensitiveModelIds.length > 0 ? exportSensitiveModelIds : undefined,
     };
 
