@@ -8,9 +8,10 @@
  * <GitHubImportModal isOpen={true} onImportComplete={handleSession} onClose={close} />
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useGitHubImport, getPhaseMessage, ImportCompleteData } from '../hooks/useGitHubImport';
 import { ProjectSession } from '../types/projectSession';
+import { getFormattedHistory, getRecentImportUrls } from '../services/ImportHistoryService';
 
 interface GitHubImportModalProps {
   isOpen: boolean;
@@ -26,6 +27,10 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
   const [repoInput, setRepoInput] = useState('');
   const [detectionPreview, setDetectionPreview] = useState<any>(null);
   const [confirmationMode, setConfirmationMode] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  const importHistory = useMemo(() => getFormattedHistory(), []);
+  const recentUrls = useMemo(() => getRecentImportUrls(5), []);
 
   const {
     progress,
@@ -98,14 +103,42 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Repository URL or owner/repo
                 </label>
-                <input
-                  type="text"
-                  value={repoInput}
-                  onChange={handleInputChange}
-                  placeholder="e.g., babylonjs/Babylon.js or owner/your-swim26-game"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  disabled={isLoading}
-                />
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={repoInput}
+                    onChange={handleInputChange}
+                    onFocus={() => setShowSuggestions(true)}
+                    placeholder="e.g., babylonjs/Babylon.js or owner/your-swim26-game"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    disabled={isLoading}
+                  />
+
+                  {/* Suggestions Dropdown */}
+                  {showSuggestions && importHistory.length > 0 && !repoInput && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
+                      <div className="p-2 border-b border-gray-200 text-xs font-semibold text-gray-600 bg-gray-50">
+                        Recent Imports
+                      </div>
+                      {importHistory.slice(0, 5).map((entry, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => {
+                            setRepoInput(entry.url);
+                            setShowSuggestions(false);
+                          }}
+                          className="w-full px-4 py-2 text-left text-xs hover:bg-blue-50 border-b border-gray-100 last:border-b-0 flex justify-between items-center"
+                        >
+                          <div>
+                            <div className="font-medium text-gray-800">{entry.label}</div>
+                            <div className="text-gray-500 text-[10px]">Last: {entry.lastImported}</div>
+                          </div>
+                          <div className="text-gray-400 text-[10px]">×{entry.timesImported}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <p className="mt-2 text-xs text-gray-500">
                   Public repositories only. Private repo support coming soon.
                 </p>

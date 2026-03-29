@@ -9,6 +9,8 @@ import ExportModal, { ExportOptions } from './components/ExportModal';
 import VersionHistoryModal from './components/VersionHistoryModal';
 import AssetBrowser from './components/AssetBrowser/AssetBrowser';
 import { GitHubImportModal } from './components/GitHubImportModal';
+import { MenuBar } from './components/MenuBar';
+import { addToImportHistory } from './services/ImportHistoryService';
 import GeminiAssistant from './components/GeminiAssistant';
 import SceneLayerPanel from './components/SceneLayerPanel';
 import PrefabCreationModal from './components/PrefabCreationModal';
@@ -510,6 +512,25 @@ export default function App() {
   });
   const assetsRef = useRef(assets);
   const addAssetRef = useRef(addAsset);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMeta = e.ctrlKey || e.metaKey;
+
+      // Ctrl+I / Cmd+I: Open GitHub import
+      if (isMeta && e.key === 'i') {
+        e.preventDefault();
+        setIsGitHubImportModalOpen(true);
+      }
+
+      // Ctrl+E / Cmd+E: Open export (if needed)
+      // This might already be handled elsewhere
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     assetsRef.current = assets;
@@ -1219,6 +1240,16 @@ export default function App() {
 
   const handleGitHubImportComplete = useCallback((importedSession: ProjectSession, sceneData?: LoadedSceneData) => {
     try {
+      // Track import history
+      const rootPath = importedSession.metadata.rootPath || 'unknown';
+      if (rootPath.startsWith('github:')) {
+        const repoPath = rootPath.replace('github:', '').split('#')[0];
+        const [owner, repo] = repoPath.split('/');
+        if (owner && repo) {
+          addToImportHistory(owner, repo, importedSession.projectName);
+        }
+      }
+
       // Activate the project with the imported session's metadata
       const activation = activateProjectForEditor(importedSession.metadata);
 
@@ -1280,9 +1311,18 @@ export default function App() {
   const selectedModel = models.find(m => m.id === selectedModelId);
 
   return (
-          <div className="w-full h-screen flex relative overflow-hidden bg-bg-dark font-sans selection:bg-blue-500/30">
-            {/* Top Bar / Global Actions */}
-            <div className="absolute top-4 left-4 z-50 flex gap-2">
+          <div className="w-full h-screen flex flex-col relative overflow-hidden bg-bg-dark font-sans selection:bg-blue-500/30">
+            {/* Menu Bar */}
+            <MenuBar
+              onImportClick={() => setIsGitHubImportModalOpen(true)}
+              onExportClick={() => setIsExportModalOpen(true)}
+              onNewProject={() => setShowOnboarding(true)}
+            />
+
+            {/* Main Content */}
+            <div className="flex-1 flex relative overflow-hidden">
+              {/* Top Bar / Global Actions */}
+              <div className="absolute top-4 left-4 z-50 flex gap-2">
               <button
                 onClick={() => setUiVisible(!uiVisible)}
                 className="bg-[#151619]/90 backdrop-blur-md px-4 py-2 hover:bg-white/5 border border-white/10 rounded transition-all duration-200 flex items-center gap-2 group"
@@ -1552,6 +1592,7 @@ export default function App() {
               newAsset={replacementAsset}
               onConfirm={handleConfirmReplacement}
             />
+            </div>
           </div>
   );
 }
