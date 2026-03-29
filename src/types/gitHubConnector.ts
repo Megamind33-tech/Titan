@@ -72,9 +72,12 @@ export interface GitHubFileContent {
 }
 
 /**
- * Connector access mode (defines what auth is available)
+ * Connector access mode.
+ * - 'public-only': unauthenticated; token is ignored even if provided
+ * - 'authenticated': fine-grained PAT required; token sent via Bearer header
+ * OAuth and GitHub App modes are explicitly deferred and not valid values.
  */
-export type GitHubAccessMode = 'public-only' | 'authenticated' | 'oauth';
+export type GitHubAccessMode = 'public-only' | 'authenticated';
 
 /**
  * Default metadata/config files that the connector may fetch for import orchestration.
@@ -140,7 +143,7 @@ export class GitHubConnectorError extends Error {
   constructor(
     public type: GitHubConnectorErrorType,
     message: string,
-    public context?: Record<string, any>
+    public context?: Record<string, unknown>
   ) {
     super(message);
     this.name = 'GitHubConnectorError';

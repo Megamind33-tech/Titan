@@ -371,13 +371,15 @@ describe('GitHub Connector — Day 1 Auth Model', () => {
     assert.strictEqual(result.error?.type, GitHubConnectorErrorType.RATE_LIMITED);
   });
 
-  // B6.11 — Inaccessible private repo with token returns PRIVATE_REPO_AUTH_REQUIRED
-  it('returns PRIVATE_REPO_AUTH_REQUIRED when repo is 404 with token (private + inaccessible)', async () => {
+  // B6.11 — 404 with "Not Found" message and token: REPO_NOT_FOUND
+  // When GitHub returns 404 with a "Not Found" body, the classifier cannot
+  // distinguish a missing repo from a private repo the token can't see.
+  // It falls through to REPO_NOT_FOUND. The message already says "or is private".
+  it('returns REPO_NOT_FOUND when GitHub 404 body says "Not Found" even with a token', async () => {
     const connector = new GitHubConnector({ accessMode: 'authenticated', authToken: 'valid-token' });
 
     (global as any).fetch = async (url: string) => {
       if (url.includes('/repos/myorg/inaccessible')) {
-        // Token present but repo is still 404 (e.g. token not authorized for this repo)
         return new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
       }
       return new Response('Not Found', { status: 404 });
@@ -390,12 +392,151 @@ describe('GitHub Connector — Day 1 Auth Model', () => {
     });
 
     assert.strictEqual(result.success, false);
-    // With a token, a 404 containing "Not Found" message falls to REPO_NOT_FOUND
-    // (indistinguishable from actually missing repo at this level)
-    assert.ok(
-      result.error?.type === GitHubConnectorErrorType.REPO_NOT_FOUND ||
-      result.error?.type === GitHubConnectorErrorType.PRIVATE_REPO_AUTH_REQUIRED,
-      `expected REPO_NOT_FOUND or PRIVATE_REPO_AUTH_REQUIRED, got: ${result.error?.type}`
+    assert.strictEqual(
+      result.error?.type,
+      GitHubConnectorErrorType.REPO_NOT_FOUND,
+      'REPO_NOT_FOUND expected when 404 body contains "Not Found" (cannot distinguish missing from private)'
     );
+    // Message must still hint at private-repo possibility
+    assert.ok(
+      result.error!.message.toLowerCase().includes('private'),
+      `error message should acknowledge private-repo possibility, got: "${result.error!.message}"`
+    );
+  });
+
+  // B6.12 — listFiles auth error classification
+  it('classifies 401 on listFiles as INVALID_TOKEN when token is present', async () => {
+    const connector = new GitHubConnector({ accessMode: 'authenticated', authToken: 'bad-token' });
+
+    (global as any).fetch = async (url: string) => {
+      return new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+    };
+
+    const result = await connector.listFiles(
+      { url: 'https://github.com/myorg/private-project', owner: 'myorg', repo: 'private-project', branch: 'main' },
+      ''
+    );
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error?.type, GitHubConnectorErrorType.INVALID_TOKEN);
+  });
+
+  it('classifies 403 + insufficient scope on listFiles as INSUFFICIENT_SCOPE', async () => {
+    const connector = new GitHubConnector({ accessMode: 'authenticated', authToken: 'limited-token' });
+
+    (global as any).fetch = async () => {
+      return new Response(
+        JSON.stringify({ message: 'Resource not accessible by personal access token' }),
+        { status: 403 }
+      );
+    };
+
+    const result = await connector.listFiles(
+      { url: 'https://github.com/myorg/private-project', owner: 'myorg', repo: 'private-project', branch: 'main' },
+      ''
+    );
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error?.type, GitHubConnectorErrorType.INSUFFICIENT_SCOPE);
+  });
+
+  // B6.13 — fetchFile auth error classification
+  it('classifies 401 on fetchFile as INVALID_TOKEN when token is present', async () => {
+    const connector = new GitHubConnector({ accessMode: 'authenticated', authToken: 'bad-token' });
+
+    (global as any).fetch = async () => {
+      return new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+    };
+
+    const result = await connector.fetchFile(
+      { url: 'https://github.com/myorg/private-project', owner: 'myorg', repo: 'private-project', branch: 'main' },
+      'package.json'
+    );
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error?.type, GitHubConnectorErrorType.INVALID_TOKEN);
+  });
+
+  it('classifies 403 + SSO header on fetchFile as SSO_AUTH_REQUIRED', async () => {
+    const connector = new GitHubConnector({ accessMode: 'authenticated', authToken: 'valid-token' });
+
+    (global as any).fetch = async () => {
+      return new Response(
+        JSON.stringify({ message: 'Resource protected by organization SAML enforcement.' }),
+        { status: 403, headers: { 'x-github-sso': 'required; url=https://github.com/orgs/acme/sso' } }
+      );
+    };
+
+    const result = await connector.fetchFile(
+      { url: 'https://github.com/myorg/private-project', owner: 'myorg', repo: 'private-project', branch: 'main' },
+      'swim26.manifest.json'
+    );
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error?.type, GitHubConnectorErrorType.SSO_AUTH_REQUIRED);
+  });
+
+  // B6.14 — public-only mode ignores token even if accidentally provided
+  it('does not send Authorization header when accessMode is public-only even if token is set', async () => {
+    // Defensive: if caller passes a token with public-only mode, the token must
+    // be ignored. The safety boundary is the access mode, not caller discipline.
+    const connector = new GitHubConnector({ accessMode: 'public-only', authToken: 'should-not-be-sent' });
+    let capturedHeaders: Record<string, string> | undefined;
+
+    (global as any).fetch = async (url: string, init?: RequestInit) => {
+      capturedHeaders = init?.headers as Record<string, string> | undefined;
+      if (url.includes('/repos/public/project')) {
+        return publicRepoResponse();
+      }
+      return new Response('Not Found', { status: 404 });
+    };
+
+    await connector.fetchRepoMetadata({
+      url: 'https://github.com/public/project',
+      owner: 'public',
+      repo: 'project',
+    });
+
+    const authHeader = capturedHeaders?.['Authorization'] ?? capturedHeaders?.['authorization'];
+    assert.strictEqual(
+      authHeader,
+      undefined,
+      'Authorization header must NOT be sent when accessMode is public-only, even if authToken is set'
+    );
+  });
+
+  // B6.15 — NETWORK_ERROR path: token does not appear in error context
+  // The catch block in fetchRepoMetadata previously stored { originalError: error }.
+  // After fix it stores {}, so the raw Error object (which could contain request
+  // info in some environments) is never in the error context.
+  it('does not store raw Error object in context for NETWORK_ERROR', async () => {
+    const secretToken = 'ghp_NETWORK_SECRET_TOKEN_XYZ';
+    const connector = new GitHubConnector({ accessMode: 'authenticated', authToken: secretToken });
+
+    (global as any).fetch = async () => {
+      throw new TypeError('Failed to fetch');
+    };
+
+    const result = await connector.fetchRepoMetadata({
+      url: 'https://github.com/myorg/project',
+      owner: 'myorg',
+      repo: 'project',
+    });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.error?.type, GitHubConnectorErrorType.NETWORK_ERROR);
+
+    // Context must not contain the raw Error object or any token value
+    if (result.error?.context) {
+      const contextJson = JSON.stringify(result.error.context);
+      assert.ok(
+        !contextJson.includes(secretToken),
+        'token must not appear in NETWORK_ERROR context'
+      );
+      assert.ok(
+        result.error.context['originalError'] === undefined,
+        'raw Error object must not be stored in context'
+      );
+    }
   });
 });

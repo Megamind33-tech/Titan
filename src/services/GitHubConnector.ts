@@ -136,10 +136,14 @@ export class GitHubConnector {
       rateRemaining === '0' ||
       lower.includes('rate limit exceeded')
     ) {
+      // Only include retryAfter in context when the header was actually present
+      const rateLimitContext = retryAfter
+        ? { ...context, retryAfter }
+        : context;
       return new GitHubConnectorError(
         GitHubConnectorErrorType.RATE_LIMITED,
         'GitHub API rate limit exceeded. Try again later or use an authenticated token.',
-        { ...context, retryAfter }
+        rateLimitContext
       );
     }
 
@@ -222,50 +226,14 @@ export class GitHubConnector {
       const response = await this.fetchWithTimeout(url);
       const errorMessage = response.ok ? '' : await this.parseGitHubErrorMessage(response);
 
-      if (response.status === 404) {
-        return {
-          success: false,
-          error: this.classifyHttpError({
-            response,
-            message: errorMessage,
-            hasToken: !!this.config.authToken,
-            context: { owner: ref.owner, repo: ref.repo },
-          }),
-        };
-      }
-
-      if (response.status === 403) {
-        return {
-          success: false,
-          error: this.classifyHttpError({
-            response,
-            message: errorMessage,
-            hasToken: !!this.config.authToken,
-            context: { owner: ref.owner, repo: ref.repo },
-          }),
-        };
-      }
-
-      if (response.status === 401) {
-        return {
-          success: false,
-          error: this.classifyHttpError({
-            response,
-            message: errorMessage,
-            hasToken: !!this.config.authToken,
-            context: { owner: ref.owner, repo: ref.repo },
-          }),
-        };
-      }
-
       if (!response.ok) {
         return {
           success: false,
           error: this.classifyHttpError({
             response,
             message: errorMessage,
-            hasToken: !!this.config.authToken,
-            context: { owner: ref.owner, repo: ref.repo, status: response.status },
+            hasToken: this.hasToken(),
+            context: { owner: ref.owner, repo: ref.repo },
           }),
         };
       }
@@ -285,8 +253,8 @@ export class GitHubConnector {
         lastUpdated: data.updated_at,
       };
 
-      // If private and no auth, fail gracefully
-      if (metadata.isPrivate && !this.config.authToken) {
+      // If private and no authenticated token (or public-only mode), fail gracefully
+      if (metadata.isPrivate && !this.hasToken()) {
         return {
           success: false,
           error: new GitHubConnectorError(
@@ -308,7 +276,7 @@ export class GitHubConnector {
         error: new GitHubConnectorError(
           GitHubConnectorErrorType.NETWORK_ERROR,
           `Network error fetching repository metadata: ${error instanceof Error ? error.message : String(error)}`,
-          { originalError: error }
+          {}
         ),
       };
     }
@@ -346,7 +314,7 @@ export class GitHubConnector {
           error: this.classifyHttpError({
             response,
             message: errorMessage,
-            hasToken: !!this.config.authToken,
+            hasToken: this.hasToken(),
             context: { path: dirPath, branch },
           }),
         };
@@ -358,7 +326,7 @@ export class GitHubConnector {
           error: this.classifyHttpError({
             response,
             message: errorMessage,
-            hasToken: !!this.config.authToken,
+            hasToken: this.hasToken(),
             context: { path: dirPath, branch, status: response.status },
           }),
         };
@@ -445,7 +413,7 @@ export class GitHubConnector {
           error: this.classifyHttpError({
             response,
             message: errorMessage,
-            hasToken: !!this.config.authToken,
+            hasToken: this.hasToken(),
             context: { filePath, branch },
           }),
         };
@@ -457,7 +425,7 @@ export class GitHubConnector {
           error: this.classifyHttpError({
             response,
             message: errorMessage,
-            hasToken: !!this.config.authToken,
+            hasToken: this.hasToken(),
             context: { filePath, branch, status: response.status },
           }),
         };
@@ -568,16 +536,28 @@ export class GitHubConnector {
   }
 
   /**
-   * Helper: fetch with timeout
+   * Returns true only when a token is present AND the access mode permits
+   * authenticated requests. 'public-only' mode never uses a token even if one
+   * is accidentally provided.
+   */
+  private hasToken(): boolean {
+    return !!this.config.authToken && this.config.accessMode !== 'public-only';
+  }
+
+  /**
+   * Helper: fetch with timeout.
+   * Sends Bearer authorization only when accessMode is 'authenticated' and a
+   * token is present. Never sends a token in 'public-only' mode.
    */
   private fetchWithTimeout(url: string): Promise<Response> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
 
     return fetch(url, {
-      headers: this.config.authToken ? {
-        // Bearer prefix is required for fine-grained PATs and is also accepted
-        // by classic PATs. Do not log or expose authToken outside this header.
+      headers: this.hasToken() ? {
+        // Bearer prefix is required for fine-grained PATs and also accepted by
+        // classic PATs. The token value must not appear anywhere outside this
+        // header (not in logs, errors, context, or persisted state).
         'Authorization': `Bearer ${this.config.authToken}`,
         'Accept': 'application/vnd.github.v3+json',
       } : {
