@@ -173,13 +173,20 @@ const MIGRATIONS: Record<string, Migration> = {
 };
 
 /**
- * Apply all pending migrations to bring state up to CURRENT_SCHEMA_VERSION
+ * Apply all pending migrations to bring state up to CURRENT_SCHEMA_VERSION.
+ * Accepts unknown (from storage deserialization) and returns validated SceneState.
  */
-const applyMigrations = (state: any): any => {
-  let currentVersion = state.schemaVersion || '1.0.0';
+const applyMigrations = (state: unknown): SceneState => {
+  // Type-guard: ensure state is an object with basic shape
+  if (!state || typeof state !== 'object') {
+    throw new Error('Cannot apply migrations to non-object state');
+  }
+
+  const stateObj = state as Record<string, unknown>;
+  const currentVersion = (stateObj.schemaVersion as string) || '1.0.0';
 
   if (currentVersion === CURRENT_SCHEMA_VERSION) {
-    return state;
+    return state as SceneState;
   }
 
   // Apply all migrations from current version to latest
@@ -191,20 +198,21 @@ const applyMigrations = (state: any): any => {
     console.warn(
       `Unknown schema version: ${currentVersion}. Expected one of: ${versionOrder.join(', ')}`
     );
-    return state;
+    return state as SceneState;
   }
 
   // Apply migrations in sequence
+  let migratedState: unknown = state;
   for (let i = currentIdx + 1; i <= targetIdx; i++) {
     const version = versionOrder[i];
     const migration = MIGRATIONS[version];
     if (migration) {
-      state = migration(state);
+      migratedState = migration(migratedState);
       console.log(`Applied migration to schema ${version}`);
     }
   }
 
-  return state;
+  return migratedState as SceneState;
 };
 
 export interface SceneSettings {
@@ -374,7 +382,7 @@ export const loadSceneVersion = async (versionId: string): Promise<SceneState | 
   if (!state) return null;
 
   // Apply migrations if schema version is older
-  state = applyMigrations(state) as SceneState;
+  state = applyMigrations(state);
 
   // Comprehensive validation and repair
   const validation = validateAndRepairPersistedScene(state);
