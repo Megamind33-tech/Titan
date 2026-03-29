@@ -3,7 +3,7 @@ import { EnvironmentPreset } from '../types/environment';
 import { Path } from '../types/paths';
 
 export interface Swim26SceneManifest {
-  version: '1.0.0' | '1.1.0';
+  version: string;
   runtime: 'babylon';
   projectType: 'swim26-babylon';
   authoredBy: 'titan';

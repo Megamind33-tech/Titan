@@ -50,6 +50,7 @@ export interface Swim26RoundTripSyncResult {
     code: string;
     message: string;
     authoredId?: string;
+    details?: Record<string, unknown>;
   }[];
 }
 
@@ -98,7 +99,7 @@ const applyNodeUpdate = (
   mesh: BabylonLikeMesh,
   node: ImportedSwim26Node,
   diagnostics: SyncChange[]
-): boolean => {
+): { didUpdate: boolean; updatedFields: string[] } => {
   const updates: string[] = [];
   const existingTransform = mesh.position && mesh.rotation && mesh.scaling
     ? {
@@ -137,8 +138,8 @@ const applyNodeUpdate = (
 
   // Update asset reference if changed (with caution)
   if (node.assetRef) {
-    const oldAssetRef = mesh.metadata?.authoredAssetRef;
-    if (!oldAssetRef || oldAssetRef.value !== node.assetRef.value) {
+    const oldAssetRef = mesh.metadata?.authoredAssetRef as ImportedSwim26Node['assetRef'] | undefined;
+    if (!oldAssetRef || oldAssetRef.value !== node.assetRef.value || oldAssetRef.type !== node.assetRef.type) {
       updates.push('assetRef');
       // Note: Asset re-resolution happens in runtime assembler
     }
@@ -164,7 +165,10 @@ const applyNodeUpdate = (
     authoredMaterial: node.material,
     authoredMetadata: node.metadata,  // Store separately, don't merge
     lastUpdateTime: Date.now(),
+    isDeactivated: false,
   };
+  mesh.isEnabled = true;
+  mesh.visibility = 1;
 
   // Log what was updated
   if (updates.length > 0) {
@@ -174,9 +178,9 @@ const applyNodeUpdate = (
       nodeName: node.name,
       details: `Updated fields: ${updates.join(', ')}`,
     });
-    return true;
+    return { didUpdate: true, updatedFields: updates };
   }
-  return false;
+  return { didUpdate: false, updatedFields: [] };
 };
 
 /**
@@ -204,8 +208,8 @@ const deactivateNode = (
 
   diagnostics.push({
     type: 'deactivated',
-    authoredId,
-    nodeName: authoredName,
+    authoredId: String(authoredId),
+    nodeName: String(authoredName),
     details: `Stale authored node (removed from manifest); preserved but inactive`,
   });
 };
@@ -228,13 +232,13 @@ export const applySwim26RoundTripSync = (
   newNodes: ImportedSwim26Node[]
 ): Swim26RoundTripSyncResult => {
   const changes: SyncChange[] = [];
-  const diagnostics: SyncChange[] = [];
   const addedMeshes: BabylonLikeMesh[] = [];
   let updatedMeshCount = 0;
   let deactivatedMeshCount = 0;
   let skippedMeshCount = 0;
   let conflictCount = 0;
   let hierarchyDriftCount = 0;
+  let unsupportedPrefabDriftCount = 0;
 
   // Build index of currently-authored nodes
   const index = buildAuthoredSubsetIndex(scene);
@@ -261,9 +265,28 @@ export const applySwim26RoundTripSync = (
 
     const existing = index.authoredIdToMesh.get(newNode.id);
     if (existing) {
+      const incomingMetadata = newNode.metadata as Record<string, unknown> | undefined;
+      const existingParent = typeof existing.metadata?.parentAuthoredId === 'string'
+        ? existing.metadata.parentAuthoredId
+        : null;
+      const incomingParent = typeof incomingMetadata?.parentAuthoredId === 'string'
+        ? incomingMetadata.parentAuthoredId
+        : null;
+      if (existingParent !== incomingParent) {
+        changes.push({
+          type: 'skipped',
+          authoredId: newNode.id,
+          nodeName: newNode.name,
+          details: `Parent relationship drift detected (${existingParent ?? 'none'} -> ${incomingParent ?? 'none'})`,
+        });
+        skippedMeshCount++;
+      }
+      if (incomingMetadata?.prefabInstanceId !== undefined) {
+        unsupportedPrefabDriftCount++;
+      }
       // Node exists: apply updates in-place
-      const didUpdate = applyNodeUpdate(existing, newNode, changes);
-      if (didUpdate) {
+      const updateResult = applyNodeUpdate(existing, newNode, changes);
+      if (updateResult.didUpdate) {
         updatedMeshCount++;
       } else {
         skippedMeshCount++;
@@ -305,7 +328,18 @@ export const applySwim26RoundTripSync = (
 
   // Prepare diagnostics
   const syncDiagnostics = [
-    { severity: 'info' as const, code: 'SYNC_SUMMARY', message: `Synchronization complete: ${changes.length} total changes` },
+    {
+      severity: 'info' as const,
+      code: 'SYNC_SUMMARY',
+      message: `Synchronization complete: ${changes.length} total changes`,
+      details: {
+        added: nodesToCreate.length,
+        updated: updatedMeshCount,
+        deactivated: deactivatedMeshCount,
+        skipped: skippedMeshCount,
+        conflicts: conflictCount,
+      },
+    },
     { severity: 'info' as const, code: 'SYNC_POLICY', message: `Policy identity key: ${SWIM26_INCREMENTAL_UPDATE_POLICY.identityKey}` },
     { severity: 'info' as const, code: 'SYNC_COUNTS', message: `Updated ${updatedMeshCount}, created ${nodesToCreate.length}, deactivated ${deactivatedMeshCount}, skipped ${skippedMeshCount}` },
     ...(conflictCount > 0
@@ -314,6 +348,36 @@ export const applySwim26RoundTripSync = (
     ...(hierarchyDriftCount > 0
       ? [{ severity: 'warning' as const, code: 'SYNC_PARENT_DRIFT', message: `${hierarchyDriftCount} nodes reference missing parent authoredId.` }]
       : []),
+    ...(unsupportedPrefabDriftCount > 0
+      ? [{
+          severity: 'warning' as const,
+          code: 'SYNC_PREFAB_UNSUPPORTED',
+          message: `${unsupportedPrefabDriftCount} nodes include prefabInstanceId metadata; prefab round-trip identity is unsupported.`,
+        }]
+      : []),
+    ...changes
+      .filter(change => change.type === 'updated' && change.details.includes('assetRef'))
+      .map(change => ({
+        severity: 'warning' as const,
+        code: 'SYNC_ASSETREF_REQUIRES_RUNTIME_RELOAD',
+        message: `Asset reference changed for authored node; runtime geometry replacement must be handled by runtime assembler policy.`,
+        authoredId: change.authoredId,
+        details: { nodeName: change.nodeName },
+      })),
+    ...changes.map(change => ({
+      severity: change.type === 'skipped' ? 'warning' as const : 'info' as const,
+      code:
+        change.type === 'created'
+          ? 'SYNC_NODE_CREATED'
+          : change.type === 'updated'
+            ? 'SYNC_NODE_UPDATED'
+            : change.type === 'deactivated'
+              ? 'SYNC_NODE_DEACTIVATED'
+              : 'SYNC_NODE_SKIPPED',
+      message: change.details,
+      authoredId: change.authoredId,
+      details: { nodeName: change.nodeName },
+    })),
   ];
 
   return {

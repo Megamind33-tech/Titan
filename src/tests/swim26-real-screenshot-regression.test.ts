@@ -52,6 +52,9 @@ test('real screenshot regression requires both host evidence and screenshot pari
       return {
         ok: true,
         screenshotPath: outputPath,
+        stdout: 'runner-ok',
+        stderr: '',
+        command: { cmd: 'node', args: ['runner.js'], source: 'json' as const },
         metadata: {
           engine: 'Babylon.js',
           captureMode: 'framebuffer',
@@ -72,6 +75,9 @@ test('real screenshot regression requires both host evidence and screenshot pari
   assert.equal(results[0].fullPass, true);
   assert.equal(fs.existsSync(results[0].diffPath), true);
   assert.equal(fs.existsSync(results[0].diffImagePath), true);
+  const diff = JSON.parse(fs.readFileSync(results[0].diffPath, 'utf-8'));
+  assert.equal(diff.screenshot.runnerCommand.cmd, 'node');
+  assert.equal(fs.existsSync(path.join(outputDir, `${fixtureId}.runner.stdout.log`)), true);
 });
 
 test('real screenshot regression reports blocked environment honestly', async () => {

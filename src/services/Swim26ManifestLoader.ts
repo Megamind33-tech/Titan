@@ -29,13 +29,13 @@ export interface Swim26ManifestData {
     authoredId?: string;
     name: string;
     assetRef?: {
-      type: 'url' | 'library' | 'embedded';
+      type: string;
       value: string;
     };
     transform?: {
-      position: [number, number, number];
-      rotation: [number, number, number];
-      scale: [number, number, number];
+      position: number[];
+      rotation: number[];
+      scale: number[];
     };
     tags?: string[];
     metadata?: Record<string, any>;
@@ -48,8 +48,8 @@ export interface Swim26ManifestData {
   paths?: Array<{
     id: string;
     name: string;
-    type: 'camera' | 'walkway' | 'other';
-    points: Array<{ position: [number, number, number] }>;
+    type: string;
+    points: Array<{ position: number[] }>;
   }>;
   collisionZones?: Array<{
     id: string;

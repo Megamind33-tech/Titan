@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import * as assert from 'node:assert';
 import { GitHubConnector } from '../services/GitHubConnector';
+import { GitHubConnectorErrorType } from '../types/gitHubConnector';
 
 const originalFetch = global.fetch;
 
@@ -93,5 +94,90 @@ describe('GitHubConnector ingestRepository', () => {
     assert.strictEqual(result.success, true);
     assert.ok(requestedUrls.some(url => url.includes('/scenes/arena/package.json')));
   });
-});
 
+  it('classifies invalid token as INVALID_TOKEN', async () => {
+    const connector = new GitHubConnector({ accessMode: 'authenticated', authToken: 'bad-token' });
+
+    (global as any).fetch = async (url: string) => {
+      if (url.includes('/repos/private/repo') && !url.includes('/contents/')) {
+        return new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+      }
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const result = await connector.ingestRepository({
+      url: 'https://github.com/private/repo',
+      owner: 'private',
+      repo: 'repo',
+    });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.errors[0]?.type, GitHubConnectorErrorType.INVALID_TOKEN);
+  });
+
+  it('classifies SSO-required token responses as SSO_AUTH_REQUIRED', async () => {
+    const connector = new GitHubConnector({ accessMode: 'authenticated', authToken: 'token' });
+
+    (global as any).fetch = async (url: string) => {
+      if (url.includes('/repos/private/repo') && !url.includes('/contents/')) {
+        return new Response(
+          JSON.stringify({ message: 'Resource protected by organization SAML enforcement.' }),
+          {
+            status: 403,
+            headers: { 'x-github-sso': 'required; url=https://github.com/orgs/acme/sso' },
+          },
+        );
+      }
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const result = await connector.ingestRepository({
+      url: 'https://github.com/private/repo',
+      owner: 'private',
+      repo: 'repo',
+    });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.errors[0]?.type, GitHubConnectorErrorType.SSO_AUTH_REQUIRED);
+  });
+
+  it('classifies insufficient scope as INSUFFICIENT_SCOPE', async () => {
+    const connector = new GitHubConnector({ accessMode: 'authenticated', authToken: 'token' });
+
+    (global as any).fetch = async (url: string) => {
+      if (url.includes('/repos/private/repo') && !url.includes('/contents/')) {
+        return new Response(JSON.stringify({ message: 'Resource not accessible by personal access token' }), { status: 403 });
+      }
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const result = await connector.ingestRepository({
+      url: 'https://github.com/private/repo',
+      owner: 'private',
+      repo: 'repo',
+    });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.errors[0]?.type, GitHubConnectorErrorType.INSUFFICIENT_SCOPE);
+  });
+
+  it('keeps public rate-limit classification as RATE_LIMITED', async () => {
+    const connector = new GitHubConnector({ accessMode: 'public-only' });
+
+    (global as any).fetch = async (url: string) => {
+      if (url.includes('/repos/public/repo') && !url.includes('/contents/')) {
+        return new Response(JSON.stringify({ message: 'API rate limit exceeded for x.x.x.x.' }), { status: 403 });
+      }
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const result = await connector.ingestRepository({
+      url: 'https://github.com/public/repo',
+      owner: 'public',
+      repo: 'repo',
+    });
+
+    assert.strictEqual(result.success, false);
+    assert.strictEqual(result.errors[0]?.type, GitHubConnectorErrorType.RATE_LIMITED);
+  });
+});

@@ -4,8 +4,8 @@
  * Handles low-level GitHub repository access for public repositories.
  * Fetches repository metadata, file listings, and file contents.
  *
- * Scope: Public repo read-only, no authentication required for MVP.
- * Private repos and OAuth support are future enhancements.
+ * Scope: public + token-authenticated repository read flows.
+ * OAuth / GitHub App auth are future enhancements.
  */
 
 import {
@@ -89,6 +89,8 @@ const isBlockedFile = (path: string): boolean => {
   return BLOCKED_FILE_PATTERNS.some(pattern => pattern.test(path));
 };
 
+type GitHubApiErrorPayload = { message?: string };
+
 /**
  * GitHub Connector Service
  */
@@ -102,6 +104,101 @@ export class GitHubConnector {
       timeout: 10000,
       ...config,
     };
+  }
+
+  private async parseGitHubErrorMessage(response: Response): Promise<string> {
+    try {
+      const text = await response.text();
+      if (!text) return '';
+      const parsed = JSON.parse(text) as GitHubApiErrorPayload;
+      return typeof parsed.message === 'string' ? parsed.message : text;
+    } catch {
+      return '';
+    }
+  }
+
+  private classifyHttpError(input: {
+    response: Response;
+    message: string;
+    hasToken: boolean;
+    context?: Record<string, unknown>;
+  }): GitHubConnectorError {
+    const { response, message, hasToken, context } = input;
+    const lower = message.toLowerCase();
+    const ssoHeader = response.headers.get('x-github-sso') || '';
+    const retryAfter = response.headers.get('retry-after');
+    const rateRemaining = response.headers.get('x-ratelimit-remaining');
+
+    if (
+      response.status === 429 ||
+      retryAfter ||
+      rateRemaining === '0' ||
+      lower.includes('rate limit exceeded')
+    ) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.RATE_LIMITED,
+        'GitHub API rate limit exceeded. Try again later or use an authenticated token.',
+        { ...context, retryAfter }
+      );
+    }
+
+    if (response.status === 401) {
+      return new GitHubConnectorError(
+        hasToken ? GitHubConnectorErrorType.INVALID_TOKEN : GitHubConnectorErrorType.UNAUTHORIZED,
+        hasToken
+          ? 'GitHub token is invalid or expired. Update your token and retry.'
+          : 'Authentication required for this repository.',
+        context
+      );
+    }
+
+    if (response.status === 403 && (ssoHeader.includes('required') || lower.includes('saml') || lower.includes('sso'))) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.SSO_AUTH_REQUIRED,
+        'GitHub organization SSO authorization is required for this token.',
+        context
+      );
+    }
+
+    if (response.status === 403 && hasToken && (lower.includes('resource not accessible') || lower.includes('insufficient'))) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.INSUFFICIENT_SCOPE,
+        'GitHub token does not have required repository read permissions.',
+        context
+      );
+    }
+
+    if (response.status === 404 && hasToken && !lower.includes('not found')) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.PRIVATE_REPO_AUTH_REQUIRED,
+        'Repository is private or inaccessible with the provided token.',
+        context
+      );
+    }
+
+    if (response.status === 404) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.REPO_NOT_FOUND,
+        'Repository not found or is private without authentication.',
+        context
+      );
+    }
+
+    if (response.status === 403) {
+      return new GitHubConnectorError(
+        hasToken ? GitHubConnectorErrorType.INSUFFICIENT_SCOPE : GitHubConnectorErrorType.PRIVATE_REPO_AUTH_REQUIRED,
+        hasToken
+          ? 'Access forbidden. Token may be missing required repository scope.'
+          : 'Private repository access requires a GitHub personal access token.',
+        context
+      );
+    }
+
+    return new GitHubConnectorError(
+      GitHubConnectorErrorType.UNKNOWN,
+      `GitHub API error: ${response.status} ${response.statusText}`,
+      { ...context, status: response.status }
+    );
   }
 
   /**
@@ -122,26 +219,41 @@ export class GitHubConnector {
 
       const url = `${this.API_BASE}/repos/${ref.owner}/${ref.repo}`;
       const response = await this.fetchWithTimeout(url);
+      const errorMessage = response.ok ? '' : await this.parseGitHubErrorMessage(response);
 
       if (response.status === 404) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.REPO_NOT_FOUND,
-            `Repository ${ref.owner}/${ref.repo} not found`,
-            { owner: ref.owner, repo: ref.repo }
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { owner: ref.owner, repo: ref.repo },
+          }),
         };
       }
 
       if (response.status === 403) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.RATE_LIMITED,
-            'GitHub API rate limit exceeded. Try again later or use an authenticated token.',
-            { retryAfter: response.headers.get('retry-after') }
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { owner: ref.owner, repo: ref.repo },
+          }),
+        };
+      }
+
+      if (response.status === 401) {
+        return {
+          success: false,
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { owner: ref.owner, repo: ref.repo },
+          }),
         };
       }
 
@@ -176,7 +288,7 @@ export class GitHubConnector {
         return {
           success: false,
           error: new GitHubConnectorError(
-            GitHubConnectorErrorType.UNAUTHORIZED,
+            GitHubConnectorErrorType.PRIVATE_REPO_AUTH_REQUIRED,
             'This is a private repository. Add a GitHub personal access token with read access and retry.',
             { repo: `${ref.owner}/${ref.repo}` }
           ),
@@ -213,6 +325,7 @@ export class GitHubConnector {
       const url = `${this.API_BASE}/repos/${ref.owner}/${ref.repo}/contents/${path}?ref=${branch}`;
 
       const response = await this.fetchWithTimeout(url);
+      const errorMessage = response.ok ? '' : await this.parseGitHubErrorMessage(response);
 
       if (response.status === 404) {
         return {
@@ -225,14 +338,15 @@ export class GitHubConnector {
         };
       }
 
-      if (response.status === 403) {
+      if (response.status === 403 || response.status === 401) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.RATE_LIMITED,
-            'GitHub API rate limit exceeded.',
-            {}
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { path: dirPath, branch },
+          }),
         };
       }
 
@@ -309,6 +423,7 @@ export class GitHubConnector {
       const url = `${this.RAW_CONTENT_BASE}/${ref.owner}/${ref.repo}/${branch}/${scopedPath}`;
 
       const response = await this.fetchWithTimeout(url);
+      const errorMessage = response.ok ? '' : await this.parseGitHubErrorMessage(response);
 
       if (response.status === 404) {
         return {
@@ -321,14 +436,15 @@ export class GitHubConnector {
         };
       }
 
-      if (response.status === 403) {
+      if (response.status === 403 || response.status === 401) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.RATE_LIMITED,
-            'GitHub rate limit exceeded.',
-            {}
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { filePath, branch },
+          }),
         };
       }
 

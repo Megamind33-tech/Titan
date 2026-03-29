@@ -108,7 +108,7 @@ jobs:
         run: node runner.test.js
 
       # ── Screenshot regression ─────────────────────────────────────────────
-      # Sets SWIM26_REAL_SCREENSHOT_CMD to the installed runner and runs the
+      # Sets canonical runner wiring (BIN + ARGS JSON) and runs the
       # regression suite.  The test exits non-zero if any fixture's fullPass
       # is false AND the failure is not a missing-baseline condition.
       #
@@ -118,7 +118,8 @@ jobs:
       - name: Run SWIM26 screenshot regression
         run: npm run test:swim26-real-render
         env:
-          SWIM26_REAL_SCREENSHOT_CMD: node ${{ github.workspace }}/tools/babylon-screenshot-runner/runner.js
+          SWIM26_REAL_SCREENSHOT_BIN: node
+          SWIM26_REAL_SCREENSHOT_ARGS_JSON: '["${{ github.workspace }}/tools/babylon-screenshot-runner/runner.js"]'
 
       # ── Artifact upload ───────────────────────────────────────────────────
       # Always upload so failures are inspectable even on non-zero test exit.
@@ -134,6 +135,8 @@ jobs:
           path: |
             artifacts/current-real/
             artifacts/baselines-real/
+            artifacts/current-real/*.runner.stdout.log
+            artifacts/current-real/*.runner.stderr.log
           retention-days: 30
           if-no-files-found: warn
 

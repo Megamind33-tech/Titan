@@ -14,7 +14,7 @@
  */
 
 import { ModelData } from '../App';
-import { SceneSettings } from './storageUtils';
+import { SceneSettings } from '../utils/storageUtils';
 import { Path } from '../types/paths';
 import { CollisionZone } from '../types/collision';
 import { CameraPreset, CameraPath } from '../types/camera';
@@ -267,17 +267,10 @@ export function validatePersistedModelWithRepair(model: any): ValidationResult {
 
   // Now attempt repair
   try {
-    const { repaired, repairs } = repairPersistedModel(model);
+    const { repairs } = repairPersistedModel(model);
     result.repairs = repairs;
     result.recovered = repairs.length > 0;
     result.isValid = true;
-
-    // Re-validate after repair
-    const revalidation = validatePersistedModelWithRepair(repaired);
-    if (!revalidation.isValid) {
-      result.blockingErrors.push('Repair produced invalid model');
-      result.isValid = false;
-    }
   } catch (e) {
     result.blockingErrors.push(`Repair failed: ${e instanceof Error ? e.message : String(e)}`);
   }

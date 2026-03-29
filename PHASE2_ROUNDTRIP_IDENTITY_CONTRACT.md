@@ -15,7 +15,7 @@
 
 - **Authored nodes:** in scope, reconciled by `authoredId`.
 - **Parented nodes:** in scope if represented in authored metadata and tied to `authoredId`.
-- **Prefab instances:** only their authored scene projection is in scope; runtime prefab logic remains out of scope.
+- **Prefab instances:** only authored scene projection is in scope; `prefabInstanceId` identity drift is explicitly diagnosed as unsupported (`SYNC_PREFAB_UNSUPPORTED`) and not auto-repaired.
 - **Paths:** authored IDs are exported/imported where available.
 - **Collision/zone items:** only authored scene subset if represented in supported manifest content.
 - **Hierarchy drift:** parent authored-ID mismatches are diagnosed; full hierarchy repair is not guaranteed in this phase.
@@ -29,6 +29,7 @@ For each incoming authored node by `authoredId`:
 3. **Unchanged supported fields:** skip and report.
 4. **Previously imported authoredId missing from new manifest:** deactivate stale authored mesh (do not delete).
 5. **Duplicate authoredId in incoming manifest:** keep first, skip later duplicates, report conflict.
+6. **Previously deactivated authoredId reappears:** reactivate and update in-place by the same `authoredId`.
 
 ## Runtime-owned boundary
 
@@ -41,6 +42,8 @@ Each sync operation reports:
 
 - added/updated/deactivated/skipped counts
 - duplicate authored ID conflicts
+- per-node machine-readable entries (created/updated/deactivated/skipped) with `authoredId`
+- parent drift warnings and prefab unsupported warnings where encountered
 - machine-readable diagnostic codes
 
 This contract is intentionally limited to the supported authored subset and does not imply full two-way runtime editing.

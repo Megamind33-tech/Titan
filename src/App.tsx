@@ -50,7 +50,7 @@ import { useActiveProjectSummary } from './hooks/useActiveProjectSummary';
 
 export interface ModelData {
   id: string;
-  authoredId: string;  // Stable round-trip identifier (UUID v4), never changes
+  authoredId?: string;  // Stable round-trip identifier (UUID v4), never changes
   name: string;
   url: string;
   assetId?: string;
@@ -80,6 +80,17 @@ export interface ModelData {
   emissiveColor?: string;
   normalMapUrl?: string;
   normalMapFile?: File;
+  roughnessMapUrl?: string;
+  roughnessMapFile?: File;
+  metalnessMapUrl?: string;
+  metalnessMapFile?: File;
+  emissiveMapUrl?: string;
+  emissiveMapFile?: File;
+  alphaMapUrl?: string;
+  alphaMapFile?: File;
+  aoMapUrl?: string;
+  aoMapFile?: File;
+  metadata?: Record<string, unknown>;
   material?: MaterialPreset;
   // Prefab fields
   prefabId?: string;

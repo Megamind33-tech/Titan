@@ -27,7 +27,9 @@ export interface BabylonLikeMesh {
   rotation: BabylonLikeVector3;
   scaling: BabylonLikeVector3;
   material?: BabylonLikePBRMaterial;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, any>;
+  isEnabled?: boolean;
+  visibility?: number;
 }
 
 export interface BabylonLikeScene {
@@ -37,7 +39,7 @@ export interface BabylonLikeScene {
   environmentIntensity?: number;
 }
 
-export type RuntimeSeverity = 'warning' | 'error';
+export type RuntimeSeverity = 'info' | 'warning' | 'error';
 
 export interface RuntimeDiagnostic {
   severity: RuntimeSeverity;

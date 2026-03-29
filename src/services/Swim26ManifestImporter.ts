@@ -52,6 +52,21 @@ export interface Swim26ManifestImportResult {
   warnings: Swim26ImportIssue[];
 }
 
+const resolveStableNodeId = (input: {
+  isV110: boolean;
+  authoredId?: unknown;
+  legacyId?: unknown;
+  fallbackSeed: Record<string, unknown>;
+}): string => {
+  if (input.isV110 && typeof input.authoredId === 'string' && input.authoredId.length > 0) {
+    return input.authoredId;
+  }
+  if (typeof input.legacyId === 'string' && input.legacyId.length > 0) {
+    return input.legacyId;
+  }
+  return generateDeterministicId(input.fallbackSeed);
+};
+
 const isStringArray = (value: unknown): value is string[] =>
   Array.isArray(value) && value.every(entry => typeof entry === 'string');
 
@@ -125,8 +140,8 @@ export const importSwim26Manifest = (input: string | Swim26SceneManifest): Swim2
   if (!isV110) {
     warnings.push({
       path: 'version',
-      message: 'Manifest v1.0.0 (no stable authoredId): Using synthetic IDs from object name+position. ' +
-               'Round-trip will fail if objects are moved or properties changed. Use v1.1.0 for reliable round-trip.',
+      message: 'Manifest v1.0.0 loaded in backward-compat mode: legacy object/path IDs are reused when present; ' +
+               'synthetic IDs are generated only for entries missing IDs. Prefer v1.1.0 authoredId for strongest round-trip stability.',
       severity: 'warning',
     });
   }
@@ -136,10 +151,16 @@ export const importSwim26Manifest = (input: string | Swim26SceneManifest): Swim2
   const processedNodes: ImportedSwim26Node[] = [];
 
   for (const obj of manifest.authoredContent.objects) {
-    // Use authoredId from manifest (v1.1.0+) or synthesize deterministic ID for backward compat
-    const nodeId = isV110 && (obj as any).authoredId
-      ? (obj as any).authoredId
-      : generateDeterministicId({ name: obj.name, position: obj.transform.position, assetRef: obj.assetRef });
+    // ID policy:
+    // - v1.1.0: prefer authoredId
+    // - v1.0.0 (and fallback): preserve legacy id when present
+    // - last resort: deterministic synthetic ID for malformed legacy entries missing id/authoredId
+    const nodeId = resolveStableNodeId({
+      isV110,
+      authoredId: (obj as any).authoredId,
+      legacyId: obj.id,
+      fallbackSeed: { name: obj.name, position: obj.transform.position, assetRef: obj.assetRef },
+    });
 
     // Check for duplicate authoredId
     if (nodesByAuthoredId.has(nodeId)) {
@@ -179,10 +200,12 @@ export const importSwim26Manifest = (input: string | Swim26SceneManifest): Swim2
             Array.isArray(path?.points) &&
             path.points.every(point => Array.isArray(point) && point.length === 3 && point.every(n => typeof n === 'number' && Number.isFinite(n)))
         ).map(path => {
-          // Use authoredId from path (v1.1.0+) or synthesize deterministic ID
-          const pathId = isV110 && (path as any).authoredId
-            ? (path as any).authoredId
-            : generateDeterministicId({ name: (path as any).name || path.type, type: path.type, pointCount: path.points.length });
+          const pathId = resolveStableNodeId({
+            isV110,
+            authoredId: (path as any).authoredId,
+            legacyId: path.id,
+            fallbackSeed: { name: (path as any).name || path.type, type: path.type, pointCount: path.points.length },
+          });
 
           return {
             id: pathId,  // This is the stable round-trip ID

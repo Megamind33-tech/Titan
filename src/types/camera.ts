@@ -64,8 +64,11 @@ export interface CameraPathPoint {
 export interface CameraPath {
   id: string;
   name: string;
-  category: CameraCategory;
+  category?: CameraCategory;
   points: CameraPathPoint[];
+  duration?: number;
+  easing?: string;
+  autoLoop?: boolean;
   loop?: boolean;
-  interpolation: 'linear' | 'smooth';
+  interpolation?: 'linear' | 'smooth';
 }

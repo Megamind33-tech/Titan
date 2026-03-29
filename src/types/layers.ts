@@ -5,7 +5,7 @@ export interface Layer {
   locked: boolean;
   color?: string;
   isCustom?: boolean;
-  order: number;
+  order?: number;
 }
 
 export const DEFAULT_LAYERS: Layer[] = [

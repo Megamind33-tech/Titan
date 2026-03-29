@@ -14,7 +14,9 @@ export const getProjectAwareExportConfig = (
     (format): format is ExportOptions['format'] => format === 'original' || format === 'glb' || format === 'obj' || format === 'swim26-manifest'
   );
   const allowedFormats = allowedByAdapter.filter(format => activation.bridgeContract.supportedExportFormats.includes(format));
-  const normalizedAllowedFormats = allowedFormats.length > 0 ? allowedFormats : ['original'];
+  const normalizedAllowedFormats: ExportOptions['format'][] = allowedFormats.length > 0
+    ? allowedFormats
+    : ['original'];
 
   const profilePreferred = activation.profile.defaults.preferredExportFormat as ExportOptions['format'];
   const recommendedFormat = normalizedAllowedFormats.includes(profilePreferred)
