@@ -34,11 +34,11 @@ export type AICommandPayload =
   | { type: 'place_asset'; assetName: string; position?: [number, number, number] }
   | { type: 'update_transform'; targetId: string; position?: [number, number, number]; rotation?: [number, number, number]; scale?: [number, number, number] }
   | { type: 'replace_asset'; targetId: string; newAssetName: string }
-  | { type: 'apply_material'; targetId: string; materialName: string }
+  | { type: 'apply_material'; targetId: string; materialName?: string; materialId?: string }
   | { type: 'swap_texture'; targetId: string; textureUrl: string }
-  | { type: 'update_lighting'; presetName: string }
+  | { type: 'update_lighting'; presetName?: string; presetId?: string }
   | { type: 'update_camera'; presetName: string }
-  | { type: 'place_along_path'; assetName: string; pathId: string; count: number }
+  | { type: 'place_along_path'; assetName?: string; assetId?: string; sourceModelId?: string; pathId?: string; pathName?: string; count: number; spacing?: number; orientToPath?: boolean }
   | { type: 'organize_layers'; targetIds: string[]; layerName: string }
   | { type: 'lock_hide'; targetIds: string[]; action: 'lock' | 'unlock' | 'hide' | 'show' }
   | { type: 'filter_by_tag'; tag: string }
@@ -97,11 +97,11 @@ Available command types:
 - 'place_asset': Place a new asset. Payload: { assetName: string, position?: [x,y,z] }
 - 'update_transform': Move, rotate, or scale an object. Payload: { targetId: string, position?: [x,y,z], rotation?: [x,y,z], scale?: [x,y,z] }
 - 'replace_asset': Replace an asset. Payload: { targetId: string, newAssetName: string }
-- 'apply_material': Apply a material preset. Payload: { targetId: string, materialName: string }
+- 'apply_material': Apply a material preset. Payload: { targetId: string, materialName?: string, materialId?: string }
 - 'swap_texture': Swap a texture. Payload: { targetId: string, textureUrl: string }
-- 'update_lighting': Create or edit lighting. Payload: { presetName: string }
+- 'update_lighting': Create or edit lighting. Payload: { presetName?: string, presetId?: string }
 - 'update_camera': Create or switch camera. Payload: { presetName: string }
-- 'place_along_path': Place repeated objects along a path. Payload: { assetName: string, pathId: string, count: number }
+- 'place_along_path': Place repeated objects along a path. Payload: { assetName?: string, assetId?: string, sourceModelId?: string, pathId?: string, pathName?: string, count: number, spacing?: number, orientToPath?: boolean }
 - 'organize_layers': Move objects to layers. Payload: { targetIds: string[], layerName: string }
 - 'lock_hide': Lock or hide elements. Payload: { targetIds: string[], action: 'lock'|'unlock'|'hide'|'show' }
 - 'filter_by_tag': Filter scene objects by tag. Payload: { tag: string }

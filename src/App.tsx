@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { Sparkles } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -15,9 +15,9 @@ import AssetReplacementModal from './components/AssetReplacementModal';
 import { exportScene } from './utils/exportUtils';
 import { saveSceneVersion, loadSceneVersion, autoSaveScene, loadAutoSave, SceneState } from './utils/storageUtils';
 import { useUndoRedo } from './hooks/useUndoRedo';
-import { AssetLibraryProvider } from './hooks/useAssetLibrary';
-import { MaterialLibraryProvider } from './hooks/useMaterialLibrary';
-import { EnvironmentLibraryProvider } from './hooks/useEnvironmentLibrary';
+import { useMaterialLibrary } from './hooks/useMaterialLibrary';
+import { useEnvironmentLibrary } from './hooks/useEnvironmentLibrary';
+import { useAssetLibrary } from './hooks/useAssetLibrary';
 import { Asset } from './types/assets';
 import { MaterialPreset } from './types/materials';
 import { EnvironmentPreset, DEFAULT_ENVIRONMENT } from './types/environment';
@@ -31,8 +31,9 @@ import { AssetMetrics } from './types/performance';
 import { DeviceProfile, QualitySettings } from './types/quality';
 import { DEFAULT_PROFILES } from './constants/qualityProfiles';
 import { pluginManager } from './services/PluginManager';
+import { validatePluginScenePatch } from './services/PluginSceneValidation';
 import { DiagnosticsPlugin } from './plugins/DiagnosticsPlugin';
-import { CommandExecutor, CommandExecutorContext, CommandExecutorCallbacks } from './services/CommandExecutor';
+import { useAICommandExecutor } from './hooks/useAICommandExecutor';
 
 export interface ModelData {
   id: string;
@@ -137,6 +138,10 @@ const DEFAULT_CAMERA_PRESETS: CameraPreset[] = [
 ];
 
 export default function App() {
+  const { assets, addAsset } = useAssetLibrary();
+  const { presets: materialPresets } = useMaterialLibrary();
+  const { presets: environmentPresets } = useEnvironmentLibrary();
+
   const { state: appState, set: setAppState, undo, redo, canUndo, canRedo } = useUndoRedo<AppState>({
     models: [],
     prefabs: [],
@@ -471,67 +476,85 @@ export default function App() {
   const [uiVisible, setUiVisible] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [pluginUIVersion, setPluginUIVersion] = useState(0);
+  const sceneSubscribersRef = useRef(new Set<(state: any) => void>());
+  const sceneStateRef = useRef({
+    models: appState.models,
+    layers: appState.layers,
+    paths: appState.paths,
+    prefabs: appState.prefabs,
+  });
+  const assetsRef = useRef(assets);
+  const addAssetRef = useRef(addAsset);
 
-  // Initialize Plugin System with working API
+  useEffect(() => {
+    assetsRef.current = assets;
+    addAssetRef.current = addAsset;
+  }, [assets, addAsset]);
+
+  // Initialize Plugin System with stable API bridge
   useEffect(() => {
     pluginManager.initCoreApi({
-      getSceneState: () => ({
-        models: appState.models,
-        layers: appState.layers,
-        paths: appState.paths,
-        prefabs: appState.prefabs,
-      }),
+      getSceneState: () => sceneStateRef.current,
       updateSceneState: (updater: (state: any) => any) => {
-        // Actually execute the update instead of just logging
-        const currentState = {
-          models: appState.models,
-          layers: appState.layers,
-          paths: appState.paths,
-          prefabs: appState.prefabs,
-        };
-        const newState = updater(currentState);
+        if (typeof updater !== 'function') {
+          throw new Error('updateSceneState requires an updater function');
+        }
+        const currentState = sceneStateRef.current;
+        const newState = validatePluginScenePatch(updater(currentState));
 
         // Apply updates to app state
-        if (newState.models !== currentState.models) {
+        if (newState?.models !== undefined && newState.models !== currentState.models) {
           setModels(newState.models);
         }
-        if (newState.layers !== currentState.layers) {
+        if (newState?.layers !== undefined && newState.layers !== currentState.layers) {
           setLayers(newState.layers);
         }
-        if (newState.paths !== currentState.paths) {
+        if (newState?.paths !== undefined && newState.paths !== currentState.paths) {
           setAppState(prev => ({ ...prev, paths: newState.paths }));
         }
-        if (newState.prefabs !== currentState.prefabs) {
+        if (newState?.prefabs !== undefined && newState.prefabs !== currentState.prefabs) {
           setPrefabs(newState.prefabs);
         }
       },
       subscribeToScene: (listener: any) => {
-        // Call with current state
-        listener({
-          models: appState.models,
-          layers: appState.layers,
-          paths: appState.paths,
-          prefabs: appState.prefabs,
-        });
-
-        // TODO: In a production app, implement proper pub/sub system
-        // For now, just return a no-op unsubscribe
-        return () => {};
+        listener(sceneStateRef.current);
+        sceneSubscribersRef.current.add(listener);
+        return () => {
+          sceneSubscribersRef.current.delete(listener);
+        };
       },
-      getAssetLibrary: () => [], // TODO: Wire asset library
-      addAsset: () => {}, // TODO: Wire asset addition
+      getAssetLibrary: () => assetsRef.current,
+      addAsset: (assetPayload: { file: File; category: any }) => {
+        if (!assetPayload?.file || !assetPayload?.category) {
+          throw new Error('addAsset requires { file, category }');
+        }
+        addAssetRef.current(assetPayload.file, assetPayload.category);
+      },
       triggerUIUpdate: () => {
         setPluginUIVersion(v => v + 1);
-      },
-      savePluginData: (id: string, data: any) => {
-        // TODO: Persist plugin data to storage
-        console.log(`Plugin data saved for ${id}`, data);
       }
     });
 
     // Register built-in plugins
     pluginManager.register(DiagnosticsPlugin);
-  }, [appState.models, appState.layers, appState.paths, appState.prefabs, setModels, setLayers, setPrefabs, setAppState]);
+  }, [setModels, setLayers, setPrefabs, setAppState]);
+
+  useEffect(() => {
+    const snapshot = {
+      models: appState.models,
+      layers: appState.layers,
+      paths: appState.paths,
+      prefabs: appState.prefabs,
+    };
+    sceneStateRef.current = snapshot;
+    sceneSubscribersRef.current.forEach(listener => {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        console.warn('Plugin scene subscriber failed', error);
+      }
+    });
+  }, [appState.models, appState.layers, appState.paths, appState.prefabs]);
 
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
@@ -595,12 +618,15 @@ export default function App() {
         prefabs,
         { gridReceiveShadow, shadowSoftness, environment }, 
         { presets: cameraPresets, activePresetId: activeCameraPresetId, paths: cameraPaths, activePathId: activeCameraPathId },
-        layers
+        layers,
+        appState.terrain,
+        appState.paths,
+        appState.collisionZones
       );
     }, 2000); // Debounce auto-save by 2 seconds
 
     return () => clearTimeout(timeoutId);
-  }, [models, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, isInitialLoad]);
+  }, [models, prefabs, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, appState.terrain, appState.paths, appState.collisionZones, isInitialLoad]);
 
   const handleFocus = useCallback(() => {
     setFocusTrigger(Date.now());
@@ -677,6 +703,66 @@ export default function App() {
     setSelectedModelId(newModel.id);
     // Don't close browser if we are placing (allows multiple placements)
     // setIsAssetBrowserOpen(false);
+  }, [setModels]);
+
+  const handleCloneModels = useCallback((
+    sourceModel: ModelData,
+    placements: Array<{ position: [number, number, number]; rotation: [number, number, number] }>
+  ): string[] => {
+    const newIds = placements.map((_, index) => `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`);
+
+    const clones = placements.map((placement, index): ModelData => ({
+      ...sourceModel,
+      id: newIds[index],
+      position: placement.position,
+      rotation: placement.rotation,
+      parentId: null,
+      childrenIds: [],
+      prefabInstanceId: undefined,
+      isPrefabRoot: false,
+      overriddenProperties: [],
+      name: `${sourceModel.name} ${index + 1}`
+    }));
+
+    setModels(prev => [...prev, ...clones]);
+    if (newIds.length > 0) {
+      setSelectedModelId(newIds[0]);
+    }
+
+    return newIds;
+  }, [setModels]);
+
+  const handleCreateModelsFromAsset = useCallback((
+    asset: Asset,
+    placements: Array<{ position: [number, number, number]; rotation: [number, number, number] }>
+  ): string[] => {
+    const ids = placements.map((_, index) => `${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`);
+    const created: ModelData[] = placements.map((placement, index) => ({
+      id: ids[index],
+      name: asset.metadata.name,
+      url: asset.url,
+      assetId: asset.id,
+      file: asset.file,
+      position: placement.position,
+      rotation: placement.rotation,
+      scale: [1, 1, 1],
+      wireframe: false,
+      lightIntensity: asset.metadata.type === 'light' ? 1 : 0,
+      castShadow: true,
+      receiveShadow: true,
+      type: asset.metadata.type === 'model' ? 'model' :
+            asset.metadata.type === 'light' ? 'light' :
+            asset.metadata.type === 'environment' ? 'environment' : 'model',
+      visible: true,
+      locked: false,
+      classification: asset.metadata.classification,
+      behavior: asset.metadata.type === 'environment' ? 'environment' : 'movable',
+      childrenIds: [],
+    }));
+
+    setModels(prev => [...prev, ...created]);
+    if (ids.length > 0) setSelectedModelId(ids[0]);
+    return ids;
   }, [setModels]);
 
   const handleReplaceAsset = useCallback((asset: Asset) => {
@@ -894,8 +980,18 @@ export default function App() {
   }, [models, gridReceiveShadow, shadowSoftness, environment, threeScene, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers]);
 
   const handleSaveVersion = useCallback(async (note: string) => {
-    await saveSceneVersion(models, prefabs, { gridReceiveShadow, shadowSoftness, environment }, note, { presets: cameraPresets, activePresetId: activeCameraPresetId, paths: cameraPaths, activePathId: activeCameraPathId }, layers);
-  }, [models, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers]);
+    await saveSceneVersion(
+      models,
+      prefabs,
+      { gridReceiveShadow, shadowSoftness, environment },
+      note,
+      { presets: cameraPresets, activePresetId: activeCameraPresetId, paths: cameraPaths, activePathId: activeCameraPathId },
+      layers,
+      appState.terrain,
+      appState.paths,
+      appState.collisionZones
+    );
+  }, [models, prefabs, gridReceiveShadow, shadowSoftness, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, layers, appState.terrain, appState.paths, appState.collisionZones]);
 
   const handleLoadVersion = useCallback(async (versionId: string) => {
     const state = await loadSceneVersion(versionId) as SceneState | null;
@@ -923,20 +1019,8 @@ export default function App() {
     }
   }, [setAppState]);
 
-  const handleExecuteAICommand = useCallback((command: any, onResult?: (result: { success: boolean; message: string }) => void) => {
-    // Load material presets from localStorage
-    let materialPresets: MaterialPreset[] = [];
-    const savedMaterials = localStorage.getItem('material_presets');
-    if (savedMaterials) {
-      try {
-        materialPresets = JSON.parse(savedMaterials);
-      } catch (e) {
-        console.warn('Failed to parse material presets from localStorage');
-      }
-    }
-
-    // Create context for the command executor
-    const executorContext: CommandExecutorContext = {
+  const handleExecuteAICommand = useAICommandExecutor({
+    context: {
       models,
       selectedModelId,
       layers,
@@ -948,10 +1032,11 @@ export default function App() {
       prefabs,
       collisionZones: appState.collisionZones,
       materialLibrary: materialPresets,
-    };
-
-    // Create callbacks for the executor to modify state
-    const executorCallbacks: CommandExecutorCallbacks = {
+      environmentLibrary: environmentPresets,
+      paths: appState.paths,
+      assets,
+    },
+    callbacks: {
       onModelsChange: setModels,
       onLayersChange: setLayers,
       onEnvironmentChange: setEnvironment,
@@ -960,37 +1045,17 @@ export default function App() {
       onCameraPathsChange: setCameraPaths,
       onActiveCameraPathChange: setActiveCameraPathId,
       onCollisionZonesChange: setCollisionZones,
-      onOpenAssetBrowser: (mode, assetName) => {
+      onOpenAssetBrowser: (mode) => {
         setAssetBrowserMode(mode);
         setIsAssetBrowserOpen(true);
       },
       onOpenExportModal: () => setIsExportModalOpen(true),
       onSelectModel: setSelectedModelId,
       onTagFilterChange: setTagFilter,
-    };
-
-    // Execute the command
-    const executor = new CommandExecutor(executorContext, executorCallbacks);
-    executor.execute(command).then(result => {
-      // Call result callback if provided
-      if (onResult) {
-        onResult({ success: result.success, message: result.message });
-      }
-
-      // Also log for debugging
-      if (!result.success) {
-        console.warn(`Command ${command.type} failed:`, result.message);
-      } else {
-        console.log(`Command ${command.type} succeeded:`, result.message);
-      }
-    }).catch(error => {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      if (onResult) {
-        onResult({ success: false, message: `Error: ${errorMessage}` });
-      }
-      console.error(`Error executing command ${command.type}:`, error);
-    });
-  }, [models, selectedModelId, layers, environment, cameraPresets, activeCameraPresetId, cameraPaths, activeCameraPathId, prefabs, appState.collisionZones, setModels, setLayers, setEnvironment, setCameraPresets, setActiveCameraPresetId, setCameraPaths, setActiveCameraPathId, setCollisionZones, setSelectedModelId, setTagFilter]);
+      onCloneModels: handleCloneModels,
+      onCreateModelsFromAsset: handleCreateModelsFromAsset,
+    }
+  });
 
   const handleTransformEnd = useCallback(() => {
     setAppState(prev => prev, { transient: false });
@@ -999,9 +1064,6 @@ export default function App() {
   const selectedModel = models.find(m => m.id === selectedModelId);
 
   return (
-    <AssetLibraryProvider>
-      <MaterialLibraryProvider>
-        <EnvironmentLibraryProvider>
           <div className="w-full h-screen flex relative overflow-hidden bg-bg-dark font-sans selection:bg-blue-500/30">
             {/* Top Bar / Global Actions */}
             <div className="absolute top-4 left-4 z-50 flex gap-2">
@@ -1132,11 +1194,6 @@ export default function App() {
                 cameraPresets={cameraPresets}
                 activeCameraPathId={activeCameraPathId}
                 cameraPaths={cameraPaths}
-                onCameraChange={(updates) => {
-                  if (activeCameraPresetId) {
-                    setCameraPresets(prev => prev.map(p => p.id === activeCameraPresetId ? { ...p, ...updates } : p));
-                  }
-                }}
                 layers={layers}
                 selectionFilter={selectionFilter}
                 terrain={appState.terrain}
@@ -1241,8 +1298,5 @@ export default function App() {
               onConfirm={handleConfirmReplacement}
             />
           </div>
-        </EnvironmentLibraryProvider>
-      </MaterialLibraryProvider>
-    </AssetLibraryProvider>
   );
 }

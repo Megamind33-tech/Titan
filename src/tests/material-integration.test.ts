@@ -22,11 +22,17 @@ const testMaterial: MaterialPreset = {
   category: 'Concrete' as MaterialCategory,
   color: '#8B8B8B',
   opacity: 1,
+  transparent: false,
   roughness: 0.9,
   metalness: 0,
   emissiveColor: '#000000',
+  emissiveIntensity: 0,
   normalMapUrl: undefined,
-  wireframe: false
+  tiling: [1, 1],
+  offset: [0, 0],
+  rotation: 0,
+  wireframe: false,
+  side: 'front'
 };
 
 // Test data: Sample model
@@ -142,7 +148,10 @@ export async function testCommandExecutorApplyMaterial() {
     activeCameraPathId: null,
     prefabs: [],
     collisionZones: [],
-    materialLibrary: [testMaterial]
+    materialLibrary: [testMaterial],
+    environmentLibrary: [],
+    paths: [],
+    assets: []
   };
 
   const callbacks: CommandExecutorCallbacks = {
@@ -157,7 +166,9 @@ export async function testCommandExecutorApplyMaterial() {
     onOpenAssetBrowser: () => {},
     onOpenExportModal: () => {},
     onSelectModel: () => {},
-    onTagFilterChange: () => {}
+    onTagFilterChange: () => {},
+    onCloneModels: () => [],
+    onCreateModelsFromAsset: () => []
   };
 
   const executor = new CommandExecutor(context, callbacks);
@@ -267,7 +278,12 @@ export async function runAllTests() {
   }
 }
 
-// Run tests if executed directly
-if (require.main === module) {
+// Run tests if executed directly in ESM environments
+const isDirectExecution = (() => {
+  if (typeof process === 'undefined' || !process.argv[1]) return false;
+  return import.meta.url === new URL(`file://${process.argv[1]}`).href;
+})();
+
+if (isDirectExecution) {
   runAllTests();
 }
