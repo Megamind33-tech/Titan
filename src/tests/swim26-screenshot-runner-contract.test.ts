@@ -56,7 +56,11 @@ const fixture: Swim26ScreenshotFixture = {
 
 test('createExternalBabylonScreenshotCapture: unset SWIM26_REAL_SCREENSHOT_CMD → blocked', async () => {
   const saved = process.env.SWIM26_REAL_SCREENSHOT_CMD;
+  const savedJson = process.env.SWIM26_REAL_SCREENSHOT_CMD_JSON;
+  const savedBin = process.env.SWIM26_REAL_SCREENSHOT_BIN;
   delete process.env.SWIM26_REAL_SCREENSHOT_CMD;
+  delete process.env.SWIM26_REAL_SCREENSHOT_CMD_JSON;
+  delete process.env.SWIM26_REAL_SCREENSHOT_BIN;
 
   try {
     const capture = createExternalBabylonScreenshotCapture();
@@ -71,6 +75,31 @@ test('createExternalBabylonScreenshotCapture: unset SWIM26_REAL_SCREENSHOT_CMD �
       );
     });
   } finally {
+    if (saved !== undefined) process.env.SWIM26_REAL_SCREENSHOT_CMD = saved;
+    else delete process.env.SWIM26_REAL_SCREENSHOT_CMD;
+    if (savedJson !== undefined) process.env.SWIM26_REAL_SCREENSHOT_CMD_JSON = savedJson;
+    else delete process.env.SWIM26_REAL_SCREENSHOT_CMD_JSON;
+    if (savedBin !== undefined) process.env.SWIM26_REAL_SCREENSHOT_BIN = savedBin;
+    else delete process.env.SWIM26_REAL_SCREENSHOT_BIN;
+  }
+});
+
+test('createExternalBabylonScreenshotCapture: invalid SWIM26_REAL_SCREENSHOT_CMD_JSON → blocked', async () => {
+  const savedJson = process.env.SWIM26_REAL_SCREENSHOT_CMD_JSON;
+  const saved = process.env.SWIM26_REAL_SCREENSHOT_CMD;
+  delete process.env.SWIM26_REAL_SCREENSHOT_CMD;
+  process.env.SWIM26_REAL_SCREENSHOT_CMD_JSON = '{bad json}';
+  try {
+    const capture = createExternalBabylonScreenshotCapture();
+    await withTemp(async (dir) => {
+      const result = await capture({ fixture, outputPath: path.join(dir, 'out.png') });
+      assert.equal(result.ok, false);
+      assert.equal(result.blocked, true);
+      assert.ok(result.blockedReason?.includes('invalid JSON'));
+    });
+  } finally {
+    if (savedJson !== undefined) process.env.SWIM26_REAL_SCREENSHOT_CMD_JSON = savedJson;
+    else delete process.env.SWIM26_REAL_SCREENSHOT_CMD_JSON;
     if (saved !== undefined) process.env.SWIM26_REAL_SCREENSHOT_CMD = saved;
   }
 });

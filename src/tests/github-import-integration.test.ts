@@ -5,7 +5,7 @@
  * Uses mocked GitHub connector to simulate repo data
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import * as assert from 'node:assert';
 import {
   GitHubRepoImporter,
@@ -17,6 +17,7 @@ import {
 import {
   GitHubRepoIngestResult,
   GitHubFileContent,
+  GitHubConnectorErrorType,
 } from '../types/gitHubConnector';
 
 /**
@@ -99,6 +100,19 @@ describe('GitHub Import - Input Validation', () => {
   it('handles whitespace in input', () => {
     const result = importer.validateRepoInput('  babylonjs/Babylon.js  ');
     assert.strictEqual(result.valid, true);
+  });
+
+  it('accepts subpath references for scoped imports', () => {
+    const result = importer.validateRepoInput('https://github.com/owner/repo/tree/main/scenes/demo');
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.reference?.branch, 'main');
+    assert.strictEqual(result.reference?.subpath, 'scenes/demo');
+  });
+
+  it('rejects unsafe subpath traversal', () => {
+    const result = importer.validateRepoInput('https://github.com/owner/repo/tree/main/../../secrets');
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.errors[0].includes('Folder path'));
   });
 });
 
@@ -299,6 +313,38 @@ describe('GitHub Import - Full Import Flow', () => {
     assert.strictEqual(result.success, true);
     assert.strictEqual(result.session?.profileId, 'profile.swim26.babylon.v1');
   });
+
+  it('fails import when manifest schema is invalid', async () => {
+    const mockConnector = new MockGitHubConnector();
+    const importer = new GitHubRepoImporter(mockConnector);
+
+    mockConnector.registerMockRepo('test', 'broken-manifest', {
+      success: true,
+      metadata: {
+        owner: 'test',
+        repo: 'broken-manifest',
+        url: 'https://github.com/test/broken-manifest',
+        isPrivate: false,
+        defaultBranch: 'main',
+      },
+      branch: 'main',
+      files: new Map([
+        ['swim26.manifest.json', mockFile(JSON.stringify({
+          version: '1.0.0',
+          type: 'swim26.scene-manifest',
+          objects: [{ id: 'o1', name: 'Broken', transform: { position: [0, 1], rotation: [0, 0, 0], scale: [1, 1, 1] } }],
+        }))],
+      ]),
+      errors: [],
+      warnings: [],
+    });
+
+    const result = await importer.importRepository('test/broken-manifest');
+
+    assert.strictEqual(result.success, false);
+    assert.ok(result.errors.some(error => error.includes('Manifest validation')));
+    assert.strictEqual(result.session, undefined);
+  });
 });
 
 describe('GitHub Import - Error Handling', () => {
@@ -420,5 +466,89 @@ describe('GitHub Import - Reference Parsing', () => {
         assert.strictEqual(ref?.branch, testCase.expectedBranch);
       }
     });
+  });
+});
+
+describe('GitHub Import - Private Auth Recovery (real connector)', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    (global as any).fetch = undefined;
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('surfaces INVALID_TOKEN when PAT is bad', async () => {
+    const importer = new GitHubRepoImporter();
+
+    (global as any).fetch = async (url: string) => {
+      if (url.includes('/repos/private/repo') && !url.includes('/contents/')) {
+        return new Response(JSON.stringify({ message: 'Bad credentials' }), { status: 401 });
+      }
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const result = await importer.prepareImport('private/repo', 'bad-token');
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.errors.some(error => error.includes(GitHubConnectorErrorType.INVALID_TOKEN)));
+  });
+
+  it('surfaces SSO_AUTH_REQUIRED when org SSO authorization is required', async () => {
+    const importer = new GitHubRepoImporter();
+
+    (global as any).fetch = async (url: string) => {
+      if (url.includes('/repos/private/repo') && !url.includes('/contents/')) {
+        return new Response(
+          JSON.stringify({ message: 'Resource protected by organization SAML enforcement.' }),
+          { status: 403, headers: { 'x-github-sso': 'required; url=https://github.com/orgs/acme/sso' } },
+        );
+      }
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const result = await importer.prepareImport('private/repo', 'token');
+    assert.strictEqual(result.valid, false);
+    assert.ok(result.errors.some(error => error.includes(GitHubConnectorErrorType.SSO_AUTH_REQUIRED)));
+  });
+
+  it('recovers from missing-token failure when retried with token', async () => {
+    const importer = new GitHubRepoImporter();
+
+    (global as any).fetch = async (url: string, init?: RequestInit) => {
+      if (url.includes('/repos/private/repo') && !url.includes('/contents/')) {
+        const authHeader = (init?.headers as Record<string, string> | undefined)?.Authorization
+          ?? (init?.headers as Record<string, string> | undefined)?.authorization;
+        const hasAuth = typeof authHeader === 'string' && authHeader.length > 0;
+        return new Response(JSON.stringify({
+          private: !hasAuth,
+          default_branch: 'main',
+          description: 'private repo',
+          topics: [],
+          language: 'TypeScript',
+          stargazers_count: 0,
+          updated_at: new Date().toISOString(),
+        }), { status: 200 });
+      }
+
+      if (url.includes('/contents/')) {
+        return new Response(JSON.stringify([]), { status: 200 });
+      }
+
+      if (url.includes('/package.json')) {
+        return new Response('{\"name\":\"private-game\"}', { status: 200 });
+      }
+
+      return new Response('Not Found', { status: 404 });
+    };
+
+    const first = await importer.prepareImport('private/repo');
+    assert.strictEqual(first.valid, false);
+    assert.ok(first.errors.some(error => error.includes(GitHubConnectorErrorType.PRIVATE_REPO_AUTH_REQUIRED)));
+
+    const second = await importer.prepareImport('private/repo', 'good-token');
+    assert.strictEqual(second.valid, true);
+    assert.strictEqual(second.errors.length, 0);
   });
 });

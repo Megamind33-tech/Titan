@@ -35,7 +35,12 @@ export const assembleSwim26RuntimeScene = async (input: {
   existingScene?: BabylonLikeScene;  // For round-trip: update existing scene instead of creating new
 }): Promise<Swim26RuntimeAssemblyResult> => {
   const importResult = importSwim26Manifest(input.manifest as any);
-  const diagnostics: RuntimeDiagnostic[] = [...importResult.warnings, ...importResult.errors];
+  const diagnostics: RuntimeDiagnostic[] = [...importResult.warnings, ...importResult.errors].map(issue => ({
+    severity: issue.severity,
+    code: issue.severity === 'error' ? 'IMPORT_VALIDATION_ERROR' : 'IMPORT_VALIDATION_WARNING',
+    message: issue.message,
+    context: { path: issue.path },
+  }));
   let scene: BabylonLikeScene = input.existingScene ?? { meshes: [] };
   let isRoundTripImport = !!input.existingScene;
 
@@ -54,7 +59,11 @@ export const assembleSwim26RuntimeScene = async (input: {
     diagnostics.push(
       ...syncResult.result.diagnostics.map(d => ({
         ...d,
-        code: 'ROUNDTRIP_SYNC',
+        code: `ROUNDTRIP_${d.code}`,
+        context: {
+          ...(d.details ?? {}),
+          authoredId: d.authoredId,
+        },
       }))
     );
     importResult.scene.nodes = syncResult.nodesToCreate;  // Only create nodes that are truly new

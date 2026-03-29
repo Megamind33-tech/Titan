@@ -5,7 +5,7 @@ export interface ControlPoint {
 
 export interface Path {
   id: string;
-  authoredId: string;  // Stable round-trip ID, generated like model.authoredId
+  authoredId?: string;  // Stable round-trip ID, generated like model.authoredId
   name: string;
   points: ControlPoint[];
   closed: boolean;

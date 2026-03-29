@@ -124,6 +124,15 @@ describe('Manifest Loading', () => {
     assert.ok(result.errors[0].message.includes('Invalid manifest type'));
   });
 
+  it('flags unsupported manifest versions during load', () => {
+    const manifest = { ...sampleManifest(), version: '2.0.0' };
+    const file = mockFile(JSON.stringify(manifest));
+
+    const result = loadSwim26Manifest(file);
+
+    assert.ok(result.errors.some(e => e.type === 'UNSUPPORTED_VERSION'));
+  });
+
   it('preserves file path in errors', () => {
     const file: GitHubFileContent = {
       path: 'subdir/manifest.json',
@@ -315,6 +324,25 @@ describe('Manifest Validation', () => {
     const validation = validateManifest(manifest as any);
 
     assert.ok(validation.issues.some(i => i.includes('version')));
+  });
+
+  it('flags unsupported version in structural validation', () => {
+    const manifest = { ...sampleManifest(), version: '9.9.9' };
+
+    const validation = validateManifest(manifest as any);
+
+    assert.strictEqual(validation.valid, false);
+    assert.ok(validation.issues.some(i => i.includes('Unsupported manifest version')));
+  });
+
+  it('flags invalid object transform vectors', () => {
+    const manifest = sampleManifest();
+    (manifest.objects![0] as any).transform.position = [0, 1];
+
+    const validation = validateManifest(manifest as any);
+
+    assert.strictEqual(validation.valid, false);
+    assert.ok(validation.issues.some(i => i.includes('invalid transform.position')));
   });
 
   it('warns about missing objects', () => {

@@ -75,15 +75,18 @@ export interface GitHubFileContent {
 export type GitHubAccessMode = 'public-only' | 'authenticated' | 'oauth';
 
 /**
- * Supported file extensions for inspection
+ * Default metadata/config files that the connector may fetch for import orchestration.
  */
-export const SUPPORTED_MANIFEST_FILES = [
+export const DEFAULT_SUPPORTED_IMPORT_FILES = [
   'swim26.manifest.json',
   'babylon.config.json',
   'swim26.config.json',
   'package.json',
   'README.md',
 ];
+
+// Backwards-compatible alias (legacy name)
+export const SUPPORTED_MANIFEST_FILES = DEFAULT_SUPPORTED_IMPORT_FILES;
 
 /**
  * Blocked file patterns that must not be imported
@@ -115,6 +118,10 @@ export interface GitHubConnectorConfig {
 export enum GitHubConnectorErrorType {
   INVALID_URL = 'INVALID_URL',
   REPO_NOT_FOUND = 'REPO_NOT_FOUND',
+  PRIVATE_REPO_AUTH_REQUIRED = 'PRIVATE_REPO_AUTH_REQUIRED',
+  INVALID_TOKEN = 'INVALID_TOKEN',
+  INSUFFICIENT_SCOPE = 'INSUFFICIENT_SCOPE',
+  SSO_AUTH_REQUIRED = 'SSO_AUTH_REQUIRED',
   RATE_LIMITED = 'RATE_LIMITED',
   UNAUTHORIZED = 'UNAUTHORIZED',
   FILE_NOT_FOUND = 'FILE_NOT_FOUND',

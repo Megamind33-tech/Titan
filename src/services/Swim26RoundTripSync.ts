@@ -25,6 +25,15 @@ export interface SyncChange {
   details: string;
 }
 
+export const SWIM26_INCREMENTAL_UPDATE_POLICY = {
+  identityKey: 'authoredId',
+  add: 'Create mesh when authoredId not found in authored subset index.',
+  update: 'Update transform/material/asset/tags/metadata for matching authoredId.',
+  remove: 'Deactivate stale authored meshes (do not delete) to protect runtime recovery paths.',
+  duplicateIncoming: 'Skip later duplicate incoming authoredId entries and emit warnings.',
+  runtimeOwnedBoundary: 'Never mutate meshes without metadata.authoredId.',
+} as const;
+
 /**
  * Result of a round-trip synchronization operation
  */
@@ -34,9 +43,14 @@ export interface Swim26RoundTripSyncResult {
   addedMeshes: BabylonLikeMesh[];
   updatedMeshCount: number;
   deactivatedMeshCount: number;
+  skippedMeshCount: number;
+  conflictCount: number;
   diagnostics: {
     severity: 'info' | 'warning' | 'error';
+    code: string;
     message: string;
+    authoredId?: string;
+    details?: Record<string, unknown>;
   }[];
 }
 
@@ -63,6 +77,9 @@ export const buildAuthoredSubsetIndex = (scene: BabylonLikeScene): AuthoredSubse
   for (const mesh of meshes) {
     const authoredId = mesh.metadata?.authoredId;
     if (typeof authoredId === 'string') {
+      if (authoredIdToMesh.has(authoredId)) {
+        continue;
+      }
       authoredIdToMesh.set(authoredId, mesh);
     }
   }
@@ -82,14 +99,25 @@ const applyNodeUpdate = (
   mesh: BabylonLikeMesh,
   node: ImportedSwim26Node,
   diagnostics: SyncChange[]
-): void => {
+): { didUpdate: boolean; updatedFields: string[] } => {
   const updates: string[] = [];
+  const existingTransform = mesh.position && mesh.rotation && mesh.scaling
+    ? {
+        position: [mesh.position.x, mesh.position.y, mesh.position.z],
+        rotation: [mesh.rotation.x, mesh.rotation.y, mesh.rotation.z],
+        scale: [mesh.scaling.x, mesh.scaling.y, mesh.scaling.z],
+      }
+    : null;
+  const transformChanged = !existingTransform ||
+    existingTransform.position.some((v, i) => v !== node.transform.position[i]) ||
+    existingTransform.rotation.some((v, i) => v !== node.transform.rotation[i]) ||
+    existingTransform.scale.some((v, i) => v !== node.transform.scale[i]);
 
   // Update transform unconditionally (visual state, authored content)
   mesh.position = { x: node.transform.position[0], y: node.transform.position[1], z: node.transform.position[2] };
   mesh.rotation = { x: node.transform.rotation[0], y: node.transform.rotation[1], z: node.transform.rotation[2] };
   mesh.scaling = { x: node.transform.scale[0], y: node.transform.scale[1], z: node.transform.scale[2] };
-  updates.push('transform');
+  if (transformChanged) updates.push('transform');
 
   // Update material hints if provided
   if (node.material) {
@@ -110,8 +138,8 @@ const applyNodeUpdate = (
 
   // Update asset reference if changed (with caution)
   if (node.assetRef) {
-    const oldAssetRef = mesh.metadata?.authoredAssetRef;
-    if (!oldAssetRef || oldAssetRef.value !== node.assetRef.value) {
+    const oldAssetRef = mesh.metadata?.authoredAssetRef as ImportedSwim26Node['assetRef'] | undefined;
+    if (!oldAssetRef || oldAssetRef.value !== node.assetRef.value || oldAssetRef.type !== node.assetRef.type) {
       updates.push('assetRef');
       // Note: Asset re-resolution happens in runtime assembler
     }
@@ -119,7 +147,11 @@ const applyNodeUpdate = (
 
   // Update tags and authored metadata
   if (node.tags.length > 0 || Object.keys(node.metadata).length > 0) {
-    updates.push('tags/metadata');
+    const oldTags = mesh.metadata?.authoredTags;
+    const oldMetadata = mesh.metadata?.authoredMetadata;
+    const tagsChanged = JSON.stringify(oldTags ?? []) !== JSON.stringify(node.tags ?? []);
+    const metadataChanged = JSON.stringify(oldMetadata ?? {}) !== JSON.stringify(node.metadata ?? {});
+    if (tagsChanged || metadataChanged) updates.push('tags/metadata');
   }
 
   // Preserve runtime-injected metadata, only store authored data in explicit field
@@ -133,7 +165,10 @@ const applyNodeUpdate = (
     authoredMaterial: node.material,
     authoredMetadata: node.metadata,  // Store separately, don't merge
     lastUpdateTime: Date.now(),
+    isDeactivated: false,
   };
+  mesh.isEnabled = true;
+  mesh.visibility = 1;
 
   // Log what was updated
   if (updates.length > 0) {
@@ -143,7 +178,9 @@ const applyNodeUpdate = (
       nodeName: node.name,
       details: `Updated fields: ${updates.join(', ')}`,
     });
+    return { didUpdate: true, updatedFields: updates };
   }
+  return { didUpdate: false, updatedFields: [] };
 };
 
 /**
@@ -160,6 +197,7 @@ const deactivateNode = (
   const authoredId = mesh.metadata?.authoredId ?? 'unknown';
   const authoredName = mesh.metadata?.authoredName ?? mesh.name ?? 'unnamed';
 
+  if (mesh.metadata?.isDeactivated === true) return;
   mesh.isEnabled = false;
   mesh.visibility = 0;
   mesh.metadata = {
@@ -170,8 +208,8 @@ const deactivateNode = (
 
   diagnostics.push({
     type: 'deactivated',
-    authoredId,
-    nodeName: authoredName,
+    authoredId: String(authoredId),
+    nodeName: String(authoredName),
     details: `Stale authored node (removed from manifest); preserved but inactive`,
   });
 };
@@ -194,10 +232,13 @@ export const applySwim26RoundTripSync = (
   newNodes: ImportedSwim26Node[]
 ): Swim26RoundTripSyncResult => {
   const changes: SyncChange[] = [];
-  const diagnostics: SyncChange[] = [];
   const addedMeshes: BabylonLikeMesh[] = [];
   let updatedMeshCount = 0;
   let deactivatedMeshCount = 0;
+  let skippedMeshCount = 0;
+  let conflictCount = 0;
+  let hierarchyDriftCount = 0;
+  let unsupportedPrefabDriftCount = 0;
 
   // Build index of currently-authored nodes
   const index = buildAuthoredSubsetIndex(scene);
@@ -206,13 +247,56 @@ export const applySwim26RoundTripSync = (
   const newAuthoredIds = new Set(newNodes.map(n => n.id));
 
   // Process new nodes: identify which are new vs. existing
+  const incomingSeen = new Set<string>();
   const nodesToCreate: ImportedSwim26Node[] = [];
   for (const newNode of newNodes) {
+    if (incomingSeen.has(newNode.id)) {
+      conflictCount++;
+      skippedMeshCount++;
+      changes.push({
+        type: 'skipped',
+        authoredId: newNode.id,
+        nodeName: newNode.name,
+        details: 'Duplicate authoredId in incoming manifest entry (skipped).',
+      });
+      continue;
+    }
+    incomingSeen.add(newNode.id);
+
     const existing = index.authoredIdToMesh.get(newNode.id);
     if (existing) {
+      const incomingMetadata = newNode.metadata as Record<string, unknown> | undefined;
+      const existingParent = typeof existing.metadata?.parentAuthoredId === 'string'
+        ? existing.metadata.parentAuthoredId
+        : null;
+      const incomingParent = typeof incomingMetadata?.parentAuthoredId === 'string'
+        ? incomingMetadata.parentAuthoredId
+        : null;
+      if (existingParent !== incomingParent) {
+        changes.push({
+          type: 'skipped',
+          authoredId: newNode.id,
+          nodeName: newNode.name,
+          details: `Parent relationship drift detected (${existingParent ?? 'none'} -> ${incomingParent ?? 'none'})`,
+        });
+        skippedMeshCount++;
+      }
+      if (incomingMetadata?.prefabInstanceId !== undefined) {
+        unsupportedPrefabDriftCount++;
+      }
       // Node exists: apply updates in-place
-      applyNodeUpdate(existing, newNode, changes);
-      updatedMeshCount++;
+      const updateResult = applyNodeUpdate(existing, newNode, changes);
+      if (updateResult.didUpdate) {
+        updatedMeshCount++;
+      } else {
+        skippedMeshCount++;
+        changes.push({
+          type: 'skipped',
+          authoredId: newNode.id,
+          nodeName: newNode.name,
+          details: 'No authored changes detected.',
+        });
+      }
     } else {
       // Node is new: will be created by caller
       nodesToCreate.push(newNode);
@@ -222,6 +306,15 @@ export const applySwim26RoundTripSync = (
         nodeName: newNode.name,
         details: `New authored node`,
       });
+    }
+  }
+
+  // Detect hierarchy drift (parent reference missing) in incoming authored subset.
+  for (const node of newNodes) {
+    const metadata = node.metadata as Record<string, unknown> | undefined;
+    const parentAuthoredId = typeof metadata?.parentAuthoredId === 'string' ? metadata.parentAuthoredId : null;
+    if (parentAuthoredId && !incomingSeen.has(parentAuthoredId) && !index.authoredIdToMesh.has(parentAuthoredId)) {
+      hierarchyDriftCount++;
     }
   }
 
@@ -235,8 +328,56 @@ export const applySwim26RoundTripSync = (
 
   // Prepare diagnostics
   const syncDiagnostics = [
-    { severity: 'info' as const, message: `Synchronization complete: ${changes.length} total changes` },
-    { severity: 'info' as const, message: `Updated ${updatedMeshCount} nodes, created ${nodesToCreate.length} nodes, deactivated ${deactivatedMeshCount} stale nodes` },
+    {
+      severity: 'info' as const,
+      code: 'SYNC_SUMMARY',
+      message: `Synchronization complete: ${changes.length} total changes`,
+      details: {
+        added: nodesToCreate.length,
+        updated: updatedMeshCount,
+        deactivated: deactivatedMeshCount,
+        skipped: skippedMeshCount,
+        conflicts: conflictCount,
+      },
+    },
+    { severity: 'info' as const, code: 'SYNC_POLICY', message: `Policy identity key: ${SWIM26_INCREMENTAL_UPDATE_POLICY.identityKey}` },
+    { severity: 'info' as const, code: 'SYNC_COUNTS', message: `Updated ${updatedMeshCount}, created ${nodesToCreate.length}, deactivated ${deactivatedMeshCount}, skipped ${skippedMeshCount}` },
+    ...(conflictCount > 0
+      ? [{ severity: 'warning' as const, code: 'SYNC_DUPLICATE_AUTHORED_ID', message: `${conflictCount} duplicate authoredId entries were skipped.` }]
+      : []),
+    ...(hierarchyDriftCount > 0
+      ? [{ severity: 'warning' as const, code: 'SYNC_PARENT_DRIFT', message: `${hierarchyDriftCount} nodes reference missing parent authoredId.` }]
+      : []),
+    ...(unsupportedPrefabDriftCount > 0
+      ? [{
+          severity: 'warning' as const,
+          code: 'SYNC_PREFAB_UNSUPPORTED',
+          message: `${unsupportedPrefabDriftCount} nodes include prefabInstanceId metadata; prefab round-trip identity is unsupported.`,
+        }]
+      : []),
+    ...changes
+      .filter(change => change.type === 'updated' && change.details.includes('assetRef'))
+      .map(change => ({
+        severity: 'warning' as const,
+        code: 'SYNC_ASSETREF_REQUIRES_RUNTIME_RELOAD',
+        message: `Asset reference changed for authored node; runtime geometry replacement must be handled by runtime assembler policy.`,
+        authoredId: change.authoredId,
+        details: { nodeName: change.nodeName },
+      })),
+    ...changes.map(change => ({
+      severity: change.type === 'skipped' ? 'warning' as const : 'info' as const,
+      code:
+        change.type === 'created'
+          ? 'SYNC_NODE_CREATED'
+          : change.type === 'updated'
+            ? 'SYNC_NODE_UPDATED'
+            : change.type === 'deactivated'
+              ? 'SYNC_NODE_DEACTIVATED'
+              : 'SYNC_NODE_SKIPPED',
+      message: change.details,
+      authoredId: change.authoredId,
+      details: { nodeName: change.nodeName },
+    })),
   ];
 
   return {
@@ -245,6 +386,8 @@ export const applySwim26RoundTripSync = (
     addedMeshes,
     updatedMeshCount,
     deactivatedMeshCount,
+    skippedMeshCount,
+    conflictCount,
     diagnostics: syncDiagnostics,
   };
 };
@@ -275,10 +418,16 @@ export const synchronizeSwim26ImportedScene = (
 } => {
   const result = applySwim26RoundTripSync(scene, newNodes);
 
-  // Extract nodes to create from the changes list
-  const nodesToCreate = newNodes.filter(
-    node => !scene.meshes?.some(m => m.metadata?.authoredId === node.id)
-  );
+  const nodesToCreate: ImportedSwim26Node[] = [];
+  const seenCreated = new Set<string>();
+  for (const change of result.changes) {
+    if (change.type !== 'created') continue;
+    if (seenCreated.has(change.authoredId)) continue;
+    const node = newNodes.find(candidate => candidate.id === change.authoredId);
+    if (!node) continue;
+    nodesToCreate.push(node);
+    seenCreated.add(change.authoredId);
+  }
 
   return { result, nodesToCreate };
 };

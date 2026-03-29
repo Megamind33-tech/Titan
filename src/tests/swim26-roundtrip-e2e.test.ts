@@ -262,7 +262,7 @@ test('duplicate authoredId in manifest generates warning', () => {
     unsupported: [],
   };
 
-  const result = importSwim26Manifest(manifest);
+  const result = importSwim26Manifest(manifest as any);
 
   assert.equal(result.ok, true);
   // Should have warning about duplicate ID
@@ -332,7 +332,7 @@ test('v1.0.0 backward compat manifests work but warn about limitations', () => {
     unsupported: [],
   };
 
-  const result = importSwim26Manifest(manifest);
+  const result = importSwim26Manifest(manifest as any);
 
   assert.equal(result.ok, true);
   assert.equal(result.scene?.nodes.length, 1);
@@ -340,9 +340,63 @@ test('v1.0.0 backward compat manifests work but warn about limitations', () => {
   // Should have warning about v1.0.0
   const v1Warning = result.warnings.find(w => w.message.includes('v1.0.0'));
   assert.ok(v1Warning, 'Should warn about v1.0.0 limitations');
-  assert.ok(v1Warning?.message.includes('Round-trip will fail if objects are moved'), 'Warning should explain the limitation');
+  assert.ok(
+    v1Warning?.message.includes('legacy object/path IDs are reused when present'),
+    'Warning should explain backward-compat ID behavior',
+  );
 
-  // Node should have synthesized ID (not the old editor ID)
+  // Backward compatibility should preserve legacy ID when authoredId is unavailable.
   const node = result.scene?.nodes[0];
-  assert.notEqual(node?.id, 'old-editor-id', 'Should use synthesized ID, not old editor ID');
+  assert.equal(node?.id, 'old-editor-id', 'Should preserve legacy object ID in v1.0.0 imports');
+});
+
+test('end-to-end sanity path: no duplicates, updates apply, removals deactivate, runtime-owned preserved', async () => {
+  const first = buildSwim26Manifest({
+    models: [
+      createTestModel('uuid-a', 'Node A', [0, 0, 0]),
+      createTestModel('uuid-b', 'Node B', [2, 0, 0]),
+    ],
+    environment: DEFAULT_ENVIRONMENT,
+    paths: [],
+  });
+
+  const initial = await assembleSwim26RuntimeScene({ manifest: first });
+  assert.equal(initial.scene.meshes?.length, 2);
+  initial.scene.meshes?.push({
+    id: 'runtime-owned-system',
+    name: 'RuntimeSystem',
+    position: { x: 0, y: 0, z: 0 },
+    rotation: { x: 0, y: 0, z: 0 },
+    scaling: { x: 1, y: 1, z: 1 },
+    metadata: { gameplayData: { protected: true } },
+  });
+
+  const second = buildSwim26Manifest({
+    models: [
+      createTestModel('uuid-a', 'Node A', [10, 0, 0]), // updated
+      createTestModel('uuid-c', 'Node C', [5, 0, 0]),  // added
+      // uuid-b removed
+    ],
+    environment: DEFAULT_ENVIRONMENT,
+    paths: [],
+  });
+
+  const reimported = await assembleSwim26RuntimeScene({
+    manifest: second,
+    existingScene: initial.scene,
+  });
+
+  const authoredMeshes = reimported.scene.meshes?.filter(m => typeof m.metadata?.authoredId === 'string') ?? [];
+  assert.equal(authoredMeshes.length, 3, 'two active + one deactivated should remain');
+  const nodeA = authoredMeshes.find(m => m.metadata?.authoredId === 'uuid-a');
+  const nodeB = authoredMeshes.find(m => m.metadata?.authoredId === 'uuid-b');
+  const nodeC = authoredMeshes.find(m => m.metadata?.authoredId === 'uuid-c');
+  assert.deepEqual(nodeA?.position, { x: 10, y: 0, z: 0 });
+  assert.equal(nodeB?.metadata?.isDeactivated, true);
+  assert.ok(nodeC);
+
+  const runtimeOwned = reimported.scene.meshes?.find(m => m.id === 'runtime-owned-system');
+  assert.equal(runtimeOwned?.metadata?.gameplayData?.protected, true);
+  assert.ok(reimported.diagnostics.some(d => d.code === 'ROUNDTRIP_SYNC_DUPLICATE_AUTHORED_ID') === false);
+  assert.ok(reimported.diagnostics.some(d => d.code === 'ROUNDTRIP_SYNC_NODE_DEACTIVATED' && (d.context as any)?.authoredId === 'uuid-b'));
 });

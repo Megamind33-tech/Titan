@@ -4,8 +4,8 @@
  * Handles low-level GitHub repository access for public repositories.
  * Fetches repository metadata, file listings, and file contents.
  *
- * Scope: Public repo read-only, no authentication required for MVP.
- * Private repos and OAuth support are future enhancements.
+ * Scope: public + token-authenticated repository read flows.
+ * OAuth / GitHub App auth are future enhancements.
  */
 
 import {
@@ -21,7 +21,7 @@ import {
   GitHubFileListResult,
   GitHubFileFetchResult,
   GitHubRepoIngestResult,
-  SUPPORTED_MANIFEST_FILES,
+  DEFAULT_SUPPORTED_IMPORT_FILES,
   BLOCKED_FILE_PATTERNS,
 } from '../types/gitHubConnector';
 
@@ -30,12 +30,17 @@ import {
  */
 export const parseGitHubReference = (input: string): GitHubRepoReference | null => {
   const trimmed = input.trim();
+  const isValidOwner = (owner: string): boolean => /^[a-zA-Z0-9_-]+$/.test(owner);
+  const isValidRepo = (repo: string): boolean => /^[a-zA-Z0-9_.-]+$/.test(repo);
 
   // Try to parse as URL: https://github.com/owner/repo[/tree/branch][/subpath]
-  const urlRegex = /^https?:\/\/github\.com\/([^\/]+)\/([^\/]+)(?:\/tree\/([^\/]+))?(?:\/(.+))?$/;
+  const urlRegex = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)(?:\/tree\/([^\/]+))?(?:\/(.+))?$/;
   const urlMatch = trimmed.match(urlRegex);
   if (urlMatch) {
     const [, owner, repo, branch, subpath] = urlMatch;
+    if (!isValidOwner(owner) || !isValidRepo(repo)) {
+      return null;
+    }
     return {
       url: `https://github.com/${owner}/${repo}`,
       owner,
@@ -50,6 +55,9 @@ export const parseGitHubReference = (input: string): GitHubRepoReference | null 
   const shortMatch = trimmed.match(shortRegex);
   if (shortMatch) {
     const [, owner, repo] = shortMatch;
+    if (!isValidOwner(owner) || !isValidRepo(repo)) {
+      return null;
+    }
     return {
       url: `https://github.com/${owner}/${repo}`,
       owner,
@@ -67,6 +75,10 @@ const validateRepoReference = (ref: GitHubRepoReference): boolean => {
   if (!ref.owner || !ref.repo) return false;
   if (!/^[a-zA-Z0-9_-]+$/.test(ref.owner)) return false;
   if (!/^[a-zA-Z0-9_.-]+$/.test(ref.repo)) return false;
+  if (ref.subpath) {
+    if (ref.subpath.includes('..')) return false;
+    if (ref.subpath.startsWith('/')) return false;
+  }
   return true;
 };
 
@@ -76,6 +88,8 @@ const validateRepoReference = (ref: GitHubRepoReference): boolean => {
 const isBlockedFile = (path: string): boolean => {
   return BLOCKED_FILE_PATTERNS.some(pattern => pattern.test(path));
 };
+
+type GitHubApiErrorPayload = { message?: string };
 
 /**
  * GitHub Connector Service
@@ -90,6 +104,101 @@ export class GitHubConnector {
       timeout: 10000,
       ...config,
     };
+  }
+
+  private async parseGitHubErrorMessage(response: Response): Promise<string> {
+    try {
+      const text = await response.text();
+      if (!text) return '';
+      const parsed = JSON.parse(text) as GitHubApiErrorPayload;
+      return typeof parsed.message === 'string' ? parsed.message : text;
+    } catch {
+      return '';
+    }
+  }
+
+  private classifyHttpError(input: {
+    response: Response;
+    message: string;
+    hasToken: boolean;
+    context?: Record<string, unknown>;
+  }): GitHubConnectorError {
+    const { response, message, hasToken, context } = input;
+    const lower = message.toLowerCase();
+    const ssoHeader = response.headers.get('x-github-sso') || '';
+    const retryAfter = response.headers.get('retry-after');
+    const rateRemaining = response.headers.get('x-ratelimit-remaining');
+
+    if (
+      response.status === 429 ||
+      retryAfter ||
+      rateRemaining === '0' ||
+      lower.includes('rate limit exceeded')
+    ) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.RATE_LIMITED,
+        'GitHub API rate limit exceeded. Try again later or use an authenticated token.',
+        { ...context, retryAfter }
+      );
+    }
+
+    if (response.status === 401) {
+      return new GitHubConnectorError(
+        hasToken ? GitHubConnectorErrorType.INVALID_TOKEN : GitHubConnectorErrorType.UNAUTHORIZED,
+        hasToken
+          ? 'GitHub token is invalid or expired. Update your token and retry.'
+          : 'Authentication required for this repository.',
+        context
+      );
+    }
+
+    if (response.status === 403 && (ssoHeader.includes('required') || lower.includes('saml') || lower.includes('sso'))) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.SSO_AUTH_REQUIRED,
+        'GitHub organization SSO authorization is required for this token.',
+        context
+      );
+    }
+
+    if (response.status === 403 && hasToken && (lower.includes('resource not accessible') || lower.includes('insufficient'))) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.INSUFFICIENT_SCOPE,
+        'GitHub token does not have required repository read permissions.',
+        context
+      );
+    }
+
+    if (response.status === 404 && hasToken && !lower.includes('not found')) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.PRIVATE_REPO_AUTH_REQUIRED,
+        'Repository is private or inaccessible with the provided token.',
+        context
+      );
+    }
+
+    if (response.status === 404) {
+      return new GitHubConnectorError(
+        GitHubConnectorErrorType.REPO_NOT_FOUND,
+        'Repository not found or is private without authentication.',
+        context
+      );
+    }
+
+    if (response.status === 403) {
+      return new GitHubConnectorError(
+        hasToken ? GitHubConnectorErrorType.INSUFFICIENT_SCOPE : GitHubConnectorErrorType.PRIVATE_REPO_AUTH_REQUIRED,
+        hasToken
+          ? 'Access forbidden. Token may be missing required repository scope.'
+          : 'Private repository access requires a GitHub personal access token.',
+        context
+      );
+    }
+
+    return new GitHubConnectorError(
+      GitHubConnectorErrorType.UNKNOWN,
+      `GitHub API error: ${response.status} ${response.statusText}`,
+      { ...context, status: response.status }
+    );
   }
 
   /**
@@ -110,26 +219,41 @@ export class GitHubConnector {
 
       const url = `${this.API_BASE}/repos/${ref.owner}/${ref.repo}`;
       const response = await this.fetchWithTimeout(url);
+      const errorMessage = response.ok ? '' : await this.parseGitHubErrorMessage(response);
 
       if (response.status === 404) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.REPO_NOT_FOUND,
-            `Repository ${ref.owner}/${ref.repo} not found`,
-            { owner: ref.owner, repo: ref.repo }
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { owner: ref.owner, repo: ref.repo },
+          }),
         };
       }
 
       if (response.status === 403) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.RATE_LIMITED,
-            'GitHub API rate limit exceeded. Try again later or use an authenticated token.',
-            { retryAfter: response.headers.get('retry-after') }
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { owner: ref.owner, repo: ref.repo },
+          }),
+        };
+      }
+
+      if (response.status === 401) {
+        return {
+          success: false,
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { owner: ref.owner, repo: ref.repo },
+          }),
         };
       }
 
@@ -164,8 +288,8 @@ export class GitHubConnector {
         return {
           success: false,
           error: new GitHubConnectorError(
-            GitHubConnectorErrorType.UNAUTHORIZED,
-            'This is a private repository. Private repo support requires authentication (coming in a future update).',
+            GitHubConnectorErrorType.PRIVATE_REPO_AUTH_REQUIRED,
+            'This is a private repository. Add a GitHub personal access token with read access and retry.',
             { repo: `${ref.owner}/${ref.repo}` }
           ),
         };
@@ -201,6 +325,7 @@ export class GitHubConnector {
       const url = `${this.API_BASE}/repos/${ref.owner}/${ref.repo}/contents/${path}?ref=${branch}`;
 
       const response = await this.fetchWithTimeout(url);
+      const errorMessage = response.ok ? '' : await this.parseGitHubErrorMessage(response);
 
       if (response.status === 404) {
         return {
@@ -213,14 +338,15 @@ export class GitHubConnector {
         };
       }
 
-      if (response.status === 403) {
+      if (response.status === 403 || response.status === 401) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.RATE_LIMITED,
-            'GitHub API rate limit exceeded.',
-            {}
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { path: dirPath, branch },
+          }),
         };
       }
 
@@ -293,9 +419,11 @@ export class GitHubConnector {
       }
 
       const branch = ref.branch || 'main';
-      const url = `${this.RAW_CONTENT_BASE}/${ref.owner}/${ref.repo}/${branch}/${filePath}`;
+      const scopedPath = ref.subpath ? `${ref.subpath.replace(/^\/+|\/+$/g, '')}/${filePath}` : filePath;
+      const url = `${this.RAW_CONTENT_BASE}/${ref.owner}/${ref.repo}/${branch}/${scopedPath}`;
 
       const response = await this.fetchWithTimeout(url);
+      const errorMessage = response.ok ? '' : await this.parseGitHubErrorMessage(response);
 
       if (response.status === 404) {
         return {
@@ -308,14 +436,15 @@ export class GitHubConnector {
         };
       }
 
-      if (response.status === 403) {
+      if (response.status === 403 || response.status === 401) {
         return {
           success: false,
-          error: new GitHubConnectorError(
-            GitHubConnectorErrorType.RATE_LIMITED,
-            'GitHub rate limit exceeded.',
-            {}
-          ),
+          error: this.classifyHttpError({
+            response,
+            message: errorMessage,
+            hasToken: !!this.config.authToken,
+            context: { filePath, branch },
+          }),
         };
       }
 
@@ -333,12 +462,12 @@ export class GitHubConnector {
       const content = await response.text();
 
       return {
-        success: true,
-        content: {
-          path: filePath,
-          name: filePath.split('/').pop() || '',
-          content,
-          encoding: 'utf-8',
+          success: true,
+          content: {
+            path: scopedPath,
+            name: filePath.split('/').pop() || '',
+            content,
+            encoding: 'utf-8',
           size: content.length,
         },
       };
@@ -358,7 +487,10 @@ export class GitHubConnector {
    * Ingest a repository: fetch supported manifest files
    * This is the main entry point for importing a GitHub repo
    */
-  async ingestRepository(ref: GitHubRepoReference): Promise<GitHubRepoIngestResult> {
+  async ingestRepository(
+    ref: GitHubRepoReference,
+    supportedFiles: string[] = DEFAULT_SUPPORTED_IMPORT_FILES
+  ): Promise<GitHubRepoIngestResult> {
     const result: GitHubRepoIngestResult = {
       success: false,
       branch: ref.branch || 'main',
@@ -377,11 +509,21 @@ export class GitHubConnector {
 
       result.metadata = metaResult.metadata;
       result.branch = metaResult.branch || result.branch;
+      const effectiveRef: GitHubRepoReference = { ...ref, branch: result.branch };
+
+      // Optional discovery pass for user-facing warnings about ignored code/runtime files.
+      const discoveryResult = await this.listFiles(effectiveRef, ref.subpath || '');
+      if (discoveryResult.success && discoveryResult.files) {
+        const blockedCount = discoveryResult.files.filter(file => isBlockedFile(file.path)).length;
+        if (blockedCount > 0) {
+          result.warnings.push(`Ignored ${blockedCount} unsupported source/config files in repository scope.`);
+        }
+      }
 
       // Try to fetch each supported manifest file
       // Don't fail if some are missing - they're optional
-      for (const fileName of SUPPORTED_MANIFEST_FILES) {
-        const fileResult = await this.fetchFile(ref, fileName);
+      for (const fileName of supportedFiles) {
+        const fileResult = await this.fetchFile(effectiveRef, fileName);
 
         if (fileResult.success && fileResult.content) {
           result.files.set(fileName, fileResult.content);
@@ -393,15 +535,17 @@ export class GitHubConnector {
         }
       }
 
-      // Success if we got at least repo metadata and at least one manifest file
-      if (result.files.size > 0) {
+      // Success requires at least one import-relevant structured file.
+      // README by itself should not be considered import-ready.
+      const hasImportableContent = Array.from(result.files.keys()).some(file => file !== 'README.md');
+      if (hasImportableContent) {
         result.success = true;
       } else {
         result.errors.push(
           new GitHubConnectorError(
             GitHubConnectorErrorType.FILE_NOT_FOUND,
-            'No supported manifest files found in repository',
-            { supportedFiles: SUPPORTED_MANIFEST_FILES }
+            'No supported import files found in repository (expected manifest/config/package metadata).',
+            { supportedFiles }
           )
         );
       }

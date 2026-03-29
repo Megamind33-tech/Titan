@@ -26,6 +26,7 @@ export interface Swim26ScreenshotCaptureResult {
   };
   stderr?: string;
   stdout?: string;
+  command?: { cmd: string; args: string[]; source: 'json' | 'bin' | 'legacy' };
 }
 
 export type Swim26ScreenshotCapture = (input: {
@@ -206,21 +207,62 @@ const compareRgba = (input: {
 // as a hung process.  2 minutes is generous for a headless Chromium render.
 const RUNNER_TIMEOUT_MS = 120_000;
 
-export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCapture => async ({ fixture, outputPath }) => {
-  const command = process.env.SWIM26_REAL_SCREENSHOT_CMD;
-  if (!command) {
+const resolveRunnerCommand = ():
+  | { ok: true; cmd: string; args: string[]; source: 'json' | 'bin' | 'legacy' }
+  | { ok: false; reason: string } => {
+  const jsonSpec = process.env.SWIM26_REAL_SCREENSHOT_CMD_JSON;
+  if (jsonSpec) {
+    try {
+      const parsed = JSON.parse(jsonSpec) as { cmd?: string; args?: string[] };
+      if (!parsed.cmd) {
+        return { ok: false, reason: 'SWIM26_REAL_SCREENSHOT_CMD_JSON is set but missing "cmd".' };
+      }
+      return { ok: true, cmd: parsed.cmd, args: Array.isArray(parsed.args) ? parsed.args : [], source: 'json' };
+    } catch (error) {
+      return { ok: false, reason: `SWIM26_REAL_SCREENSHOT_CMD_JSON is invalid JSON: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  const bin = process.env.SWIM26_REAL_SCREENSHOT_BIN;
+  if (bin) {
+    const argsRaw = process.env.SWIM26_REAL_SCREENSHOT_ARGS_JSON ?? '[]';
+    try {
+      const args = JSON.parse(argsRaw);
+      if (!Array.isArray(args) || !args.every(v => typeof v === 'string')) {
+        return { ok: false, reason: 'SWIM26_REAL_SCREENSHOT_ARGS_JSON must be a JSON string array.' };
+      }
+      return { ok: true, cmd: bin, args, source: 'bin' };
+    } catch (error) {
+      return { ok: false, reason: `SWIM26_REAL_SCREENSHOT_ARGS_JSON is invalid JSON: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+
+  const legacy = process.env.SWIM26_REAL_SCREENSHOT_CMD;
+  if (!legacy) {
     return {
       ok: false,
-      blocked: true,
-      blockedReason: 'SWIM26_REAL_SCREENSHOT_CMD is not set. Provide a command that renders fixture manifests in a real Babylon environment and writes PNG output.',
+      reason: 'No screenshot command is configured. Set SWIM26_REAL_SCREENSHOT_CMD_JSON (preferred), or SWIM26_REAL_SCREENSHOT_BIN + SWIM26_REAL_SCREENSHOT_ARGS_JSON, or legacy SWIM26_REAL_SCREENSHOT_CMD.',
     };
   }
 
-  // SWIM26_REAL_SCREENSHOT_CMD is split on whitespace to extract cmd + base args.
-  // Limitation: paths with spaces in the command string will break this split.
-  // If your runner path contains spaces, wrap it in a shell script with no spaces
-  // in its path, or set SWIM26_REAL_SCREENSHOT_CMD to a wrapper script path.
-  const [cmd, ...baseArgs] = command.trim().split(/\s+/).filter(Boolean);
+  const parts = legacy.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return { ok: false, reason: 'SWIM26_REAL_SCREENSHOT_CMD is empty.' };
+  }
+  return { ok: true, cmd: parts[0], args: parts.slice(1), source: 'legacy' };
+};
+
+export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCapture => async ({ fixture, outputPath }) => {
+  const resolvedCommand = resolveRunnerCommand();
+  if (!resolvedCommand.ok) {
+    const reason = 'reason' in resolvedCommand ? resolvedCommand.reason : 'Screenshot command is not configured.';
+    return {
+      ok: false,
+      blocked: true,
+      blockedReason: reason,
+    };
+  }
+  const { cmd, args: baseArgs, source } = resolvedCommand;
   // Derive the metadata path from the output path.  outputPath must end in .png.
   // If it does not, the metadata path will have '.capture.json' appended, which
   // is unusual but harmless — the runner receives --metadata explicitly.
@@ -244,6 +286,7 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
         : `External screenshot runner could not be started: ${proc.error.message}`,
       stderr: proc.stderr?.trim(),
       stdout: proc.stdout?.trim(),
+      command: { cmd, args: baseArgs, source },
     };
   }
 
@@ -265,6 +308,7 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
         : `External Babylon screenshot command failed (exit ${proc.status}). See stderr in diff artifact.`,
       stderr,
       stdout: proc.stdout?.trim(),
+      command: { cmd, args: baseArgs, source },
     };
   }
 
@@ -275,6 +319,7 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
       blockedReason: 'External Babylon screenshot command completed without producing the expected output file.',
       stdout: proc.stdout?.trim(),
       stderr: proc.stderr?.trim(),
+      command: { cmd, args: baseArgs, source },
     };
   }
 
@@ -287,7 +332,15 @@ export const createExternalBabylonScreenshotCapture = (): Swim26ScreenshotCaptur
     }
   }
 
-  return { ok: true, screenshotPath: outputPath, metadataPath, metadata, stdout: proc.stdout?.trim(), stderr: proc.stderr?.trim() };
+  return {
+    ok: true,
+    screenshotPath: outputPath,
+    metadataPath,
+    metadata,
+    stdout: proc.stdout?.trim(),
+    stderr: proc.stderr?.trim(),
+    command: { cmd, args: baseArgs, source },
+  };
 };
 
 export const runSwim26RealScreenshotRegression = async (input: {
@@ -319,12 +372,16 @@ export const runSwim26RealScreenshotRegression = async (input: {
     const baselinePath = path.join(input.baselineDir, `${fixture.id}.png`);
     const diffPath = path.join(input.outputDir, `${fixture.id}.real.diff.json`);
     const diffImagePath = path.join(input.outputDir, `${fixture.id}.real.diff.ppm`);
+    const stdoutPath = path.join(input.outputDir, `${fixture.id}.runner.stdout.log`);
+    const stderrPath = path.join(input.outputDir, `${fixture.id}.runner.stderr.log`);
     const reasons: string[] = [];
 
     if (!hostResult.pass) reasons.push('Host verification did not pass.');
     if (!hostResult.usedEngineLoaderPath) reasons.push('No SceneLoader engine loader evidence was recorded.');
 
     const captureResult = await capture({ fixture, outputPath: actualPath });
+    if (captureResult.stdout) fs.writeFileSync(stdoutPath, captureResult.stdout + '\n', 'utf-8');
+    if (captureResult.stderr) fs.writeFileSync(stderrPath, captureResult.stderr + '\n', 'utf-8');
     let screenshotPass = false;
     let blocked = false;
     let blockedReason: string | undefined;
@@ -394,6 +451,9 @@ export const runSwim26RealScreenshotRegression = async (input: {
         diffImagePath,
         metadata: captureResult.metadata,
         metadataPath: captureResult.metadataPath,
+        runnerCommand: captureResult.command,
+        stdoutPath: fs.existsSync(stdoutPath) ? stdoutPath : undefined,
+        stderrPath: fs.existsSync(stderrPath) ? stderrPath : undefined,
       },
       reasons,
       stdout: captureResult.stdout,

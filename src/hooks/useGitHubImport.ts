@@ -61,11 +61,30 @@ export interface UseGitHubImportState {
  * Hook return value
  */
 export interface UseGitHubImportReturn extends UseGitHubImportState {
-  importRepository: (repoInput: string, profileIdHint?: string) => Promise<void>;
-  prepareImport: (repoInput: string) => Promise<any>;
+  importRepository: (repoInput: string, profileIdHint?: string, authToken?: string) => Promise<void>;
+  prepareImport: (repoInput: string, authToken?: string) => Promise<any>;
   clear: () => void;
   retry: () => Promise<void>;
 }
+
+const toFriendlyImportError = (raw: string): string => {
+  if (raw.startsWith('PRIVATE_REPO_AUTH_REQUIRED:')) {
+    return 'This repository appears private. Add a read-only GitHub token and try again.';
+  }
+  if (raw.startsWith('INVALID_TOKEN:')) {
+    return 'That token was rejected by GitHub. Verify the token and retry.';
+  }
+  if (raw.startsWith('SSO_AUTH_REQUIRED:')) {
+    return 'This org requires SSO authorization for your token. Authorize it in GitHub, then retry.';
+  }
+  if (raw.startsWith('INSUFFICIENT_SCOPE:')) {
+    return 'Your token does not have required repository read permission for this repo.';
+  }
+  if (raw.startsWith('RATE_LIMITED:')) {
+    return 'GitHub rate limit was reached. Wait and retry, or use an authorized token.';
+  }
+  return raw;
+};
 
 /**
  * useGitHubImport Hook
@@ -90,7 +109,7 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
   }, []);
 
   const importRepository = useCallback(
-    async (repoInput: string, profileIdHint?: string) => {
+    async (repoInput: string, profileIdHint?: string, authToken?: string) => {
       setLastInput(repoInput);
 
       try {
@@ -112,13 +131,14 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
 
         // Phase 3: Fetch and ingest repository
         updateProgress('loading', 'Loading repository data from GitHub...', 40);
-        const result = await importer.importRepository(repoInput, profileIdHint);
+        const result = await importer.importRepository(repoInput, profileIdHint, authToken);
 
         if (!result.success) {
+          const friendlyError = toFriendlyImportError(result.errors[0] || 'Import failed');
           setState(prev => ({
             ...prev,
-            error: result.errors[0] || 'Import failed',
-            progress: { phase: 'error', message: result.errors[0] || 'Unknown error', percentComplete: 0 },
+            error: friendlyError,
+            progress: { phase: 'error', message: friendlyError, percentComplete: 0 },
             isLoading: false,
           }));
           return;
@@ -167,15 +187,16 @@ export const useGitHubImport = (): UseGitHubImportReturn => {
   );
 
   const prepareImport = useCallback(
-    async (repoInput: string) => {
+    async (repoInput: string, authToken?: string) => {
       try {
         updateProgress('detecting', 'Detecting project...', 20);
-        const preparation = await importer.prepareImport(repoInput);
+        const preparation = await importer.prepareImport(repoInput, authToken);
 
         if (!preparation.valid) {
+          const friendlyError = toFriendlyImportError(preparation.errors[0] || 'Preparation failed');
           setState(prev => ({
             ...prev,
-            error: preparation.errors[0] || 'Preparation failed',
+            error: friendlyError,
           }));
           return null;
         }

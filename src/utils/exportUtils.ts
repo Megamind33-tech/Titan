@@ -246,12 +246,12 @@ export const exportScene = async (
         model.aoMapUrl ||
         model.aoMapFile
       ) ? {
-        normalMap: model.normalMapUrl || model.normalMapFile || undefined,
-        roughnessMap: model.roughnessMapUrl || model.roughnessMapFile || undefined,
-        metalnessMap: model.metalnessMapUrl || model.metalnessMapFile || undefined,
-        emissiveMap: model.emissiveMapUrl || model.emissiveMapFile || undefined,
-        alphaMap: model.alphaMapUrl || model.alphaMapFile || undefined,
-        aoMap: model.aoMapUrl || model.aoMapFile || undefined,
+        normalMap: model.normalMapUrl || undefined,
+        roughnessMap: model.roughnessMapUrl || undefined,
+        metalnessMap: model.metalnessMapUrl || undefined,
+        emissiveMap: model.emissiveMapUrl || undefined,
+        alphaMap: model.alphaMapUrl || undefined,
+        aoMap: model.aoMapUrl || undefined,
       } : undefined;
 
       // Phase 3: Build UV transform (if available)

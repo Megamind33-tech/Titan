@@ -17,7 +17,7 @@ import {
   synchronizeSwim26ImportedScene,
 } from '../services/Swim26RoundTripSync';
 import { ImportedSwim26Node } from '../services/Swim26ManifestImporter';
-import { BabylonLikeScene } from '../services/swim26Runtime/types';
+import { BabylonLikeMesh, BabylonLikeScene } from '../services/swim26Runtime/types';
 
 /**
  * Helper: Create a mock Babylon.js scene with meshes.
@@ -29,7 +29,7 @@ const createMockScene = (meshes: any[] = []): BabylonLikeScene => ({
 /**
  * Helper: Create a mock mesh with metadata.
  */
-const createMockMesh = (authoredId: string, name: string, position: [number, number, number] = [0, 0, 0]) => ({
+const createMockMesh = (authoredId: string, name: string, position: [number, number, number] = [0, 0, 0]): BabylonLikeMesh => ({
   id: `mesh-${authoredId}`,
   name,
   position: { x: position[0], y: position[1], z: position[2] },
@@ -40,7 +40,7 @@ const createMockMesh = (authoredId: string, name: string, position: [number, num
     authoredName: name,
     authoredTags: [],
     isDeactivated: false,
-  },
+  } as any,
   isEnabled: true,
   visibility: 1,
 });
@@ -51,7 +51,8 @@ const createMockMesh = (authoredId: string, name: string, position: [number, num
 const createMockNode = (
   id: string,
   name: string,
-  position: [number, number, number] = [0, 0, 0]
+  position: [number, number, number] = [0, 0, 0],
+  options?: Partial<ImportedSwim26Node>
 ): ImportedSwim26Node => ({
   id,
   name,
@@ -60,8 +61,10 @@ const createMockNode = (
     rotation: [0, 0, 0],
     scale: [1, 1, 1],
   },
-  tags: [],
-  metadata: {},
+  tags: options?.tags ?? [],
+  metadata: options?.metadata ?? {},
+  assetRef: options?.assetRef,
+  material: options?.material,
 });
 
 // ─── PHASE 6: FIXTURE-BASED TESTS ──────────────────────────────────────────
@@ -71,7 +74,7 @@ test('builds authored subset index correctly', () => {
   const mesh2 = createMockMesh('uuid-2', 'Flag');
   const mesh3 = {
     ...createMockMesh('uuid-3', 'Runtime Object'),
-    metadata: { /* no authoredId */ },
+    metadata: { /* no authoredId */ } as any,
   };
 
   const scene = createMockScene([mesh1, mesh2, mesh3]);
@@ -152,7 +155,7 @@ test('handles mixed updates, creations, and deactivations in one sync', () => {
   const flag = createMockMesh('uuid-flag', 'Flag', [0, 0, 0]);
   const tower = {
     ...createMockMesh('uuid-tower', 'Tower'),
-    metadata: { /* no authoredId - runtime owned */ },
+    metadata: { /* no authoredId - runtime owned */ } as any,
   };
   const originalTowerMetadata = { ...tower.metadata };
   const scene = createMockScene([podium, flag, tower]);
@@ -219,6 +222,137 @@ test('diagnostic reporting captures all changes', () => {
   assert.ok(result.changes.some(c => c.type === 'updated'));
   assert.ok(result.changes.some(c => c.type === 'created'));
   assert.ok(result.diagnostics.length > 0);
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_SUMMARY'));
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_NODE_UPDATED' && d.authoredId === 'uuid-podium'));
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_NODE_CREATED' && d.authoredId === 'uuid-flag'));
+  const summary = result.diagnostics.find(d => d.code === 'SYNC_SUMMARY');
+  assert.equal((summary?.details as any)?.added, 1);
+  assert.equal((summary?.details as any)?.updated, 1);
+});
+
+test('duplicate incoming authoredId entries are skipped and reported', () => {
+  const scene = createMockScene([]);
+  const duplicateA = createMockNode('uuid-dup', 'A');
+  const duplicateB = createMockNode('uuid-dup', 'B', [5, 0, 0]);
+
+  const result = applySwim26RoundTripSync(scene, [duplicateA, duplicateB]);
+
+  assert.equal(result.conflictCount, 1);
+  assert.ok(result.changes.some(c => c.type === 'skipped' && c.authoredId === 'uuid-dup'));
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_DUPLICATE_AUTHORED_ID'));
+
+  const synchronized = synchronizeSwim26ImportedScene(scene, [duplicateA, duplicateB]);
+  assert.equal(synchronized.nodesToCreate.length, 1, 'duplicate authored IDs should not create duplicate meshes');
+});
+
+test('unchanged nodes are skipped instead of counted as updates', () => {
+  const mesh = createMockMesh('uuid-static', 'Static', [1, 2, 3]);
+  const scene = createMockScene([mesh]);
+  const node = createMockNode('uuid-static', 'Static', [1, 2, 3]);
+
+  const result = applySwim26RoundTripSync(scene, [node]);
+
+  assert.equal(result.updatedMeshCount, 0);
+  assert.equal(result.skippedMeshCount, 1);
+  assert.ok(result.changes.some(c => c.type === 'skipped'));
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_NODE_SKIPPED' && d.authoredId === 'uuid-static'));
+});
+
+test('assetRef changes are updated in-place and diagnosed', () => {
+  const mesh = createMockMesh('uuid-asset', 'Asset Node', [0, 0, 0]);
+  mesh.metadata.authoredAssetRef = { type: 'url', value: 'old.glb' };
+  const scene = createMockScene([mesh]);
+  const node = createMockNode('uuid-asset', 'Asset Node', [0, 0, 0], {
+    assetRef: { type: 'url', value: 'new.glb' },
+  });
+
+  const result = applySwim26RoundTripSync(scene, [node]);
+
+  assert.equal(result.updatedMeshCount, 1);
+  const update = result.changes.find(c => c.type === 'updated' && c.authoredId === 'uuid-asset');
+  assert.ok(update?.details.includes('assetRef'));
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_ASSETREF_REQUIRES_RUNTIME_RELOAD' && d.authoredId === 'uuid-asset'));
+});
+
+test('material and metadata changes are updated and diagnosed', () => {
+  const mesh = createMockMesh('uuid-mat', 'Material Node', [0, 0, 0]);
+  mesh.metadata.authoredTags = ['old'];
+  mesh.metadata.authoredMetadata = { lane: 1 };
+  const scene = createMockScene([mesh]);
+  const node = createMockNode('uuid-mat', 'Material Node', [0, 0, 0], {
+    tags: ['new-tag'],
+    metadata: { lane: 2 },
+    material: { color: '#ff0000', roughness: 0.4, metalness: 0.2 },
+  });
+
+  const result = applySwim26RoundTripSync(scene, [node]);
+  assert.equal(result.updatedMeshCount, 1);
+  const details = result.changes.find(c => c.type === 'updated')?.details ?? '';
+  assert.ok(details.includes('color'));
+  assert.ok(details.includes('roughness'));
+  assert.ok(details.includes('tags/metadata'));
+});
+
+test('removed authored nodes produce deactivation diagnostics with authoredId', () => {
+  const mesh = createMockMesh('uuid-remove', 'Remove Me');
+  const scene = createMockScene([mesh]);
+
+  const result = applySwim26RoundTripSync(scene, []);
+  assert.equal(result.deactivatedMeshCount, 1);
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_NODE_DEACTIVATED' && d.authoredId === 'uuid-remove'));
+});
+
+test('previously deactivated authored node is reactivated when it reappears', () => {
+  const mesh = createMockMesh('uuid-return', 'Return Node');
+  mesh.metadata.isDeactivated = true;
+  mesh.isEnabled = false;
+  mesh.visibility = 0;
+  const scene = createMockScene([mesh]);
+  const node = createMockNode('uuid-return', 'Return Node', [3, 0, 0]);
+
+  const result = applySwim26RoundTripSync(scene, [node]);
+  assert.equal(result.updatedMeshCount, 1);
+  assert.equal(mesh.metadata.isDeactivated, false);
+  assert.equal(mesh.isEnabled, true);
+  assert.equal(mesh.visibility, 1);
+});
+
+test('runtime-owned meshes are not deactivated when authored subset shrinks', () => {
+  const authored = createMockMesh('uuid-authored', 'Authored');
+  const runtimeOwned = {
+    ...createMockMesh('runtime-1', 'Runtime'),
+    metadata: { gameplayData: { score: 42 } } as any,
+  };
+  const scene = createMockScene([authored, runtimeOwned]);
+
+  applySwim26RoundTripSync(scene, []);
+
+  assert.equal(authored.metadata.isDeactivated, true);
+  assert.equal(runtimeOwned.metadata.gameplayData.score, 42);
+  assert.equal(runtimeOwned.metadata.isDeactivated, undefined);
+});
+
+test('parent drift is reported with warnings and skipped detail', () => {
+  const mesh = createMockMesh('uuid-child', 'Child');
+  mesh.metadata.parentAuthoredId = 'uuid-parent-a';
+  const scene = createMockScene([mesh]);
+  const node = createMockNode('uuid-child', 'Child', [0, 0, 0], {
+    metadata: { parentAuthoredId: 'uuid-parent-b' },
+  });
+
+  const result = applySwim26RoundTripSync(scene, [node]);
+  assert.ok(result.changes.some(c => c.type === 'skipped' && c.details.includes('Parent relationship drift')));
+});
+
+test('prefab identity drift is fenced off with explicit warning', () => {
+  const mesh = createMockMesh('uuid-prefab', 'Prefab Node');
+  const scene = createMockScene([mesh]);
+  const node = createMockNode('uuid-prefab', 'Prefab Node', [0, 0, 0], {
+    metadata: { prefabInstanceId: 'prefab-123' },
+  });
+
+  const result = applySwim26RoundTripSync(scene, [node]);
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_PREFAB_UNSUPPORTED'));
 });
 
 test('multiple iterations without duplication (round-trip stress test)', () => {
@@ -249,4 +383,14 @@ test('multiple iterations without duplication (round-trip stress test)', () => {
 
   // Final check: should have only 2 meshes, not accumulating duplicates
   assert.equal(scene.meshes!.length, 2);
+});
+
+test('reports hierarchy drift when parent authoredId is missing', () => {
+  const scene = createMockScene([]);
+  const childNode = createMockNode('uuid-child', 'Child');
+  childNode.metadata = { parentAuthoredId: 'uuid-missing-parent' };
+
+  const result = applySwim26RoundTripSync(scene, [childNode]);
+
+  assert.ok(result.diagnostics.some(d => d.code === 'SYNC_PARENT_DRIFT'));
 });
