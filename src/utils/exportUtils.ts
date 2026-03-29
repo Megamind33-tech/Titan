@@ -21,6 +21,10 @@ import {
   StrictMaterialMaps,
   StrictMaterialUVTransform,
 } from '../services/ExportManifestValidation';
+import {
+  runPreflightValidation,
+  PreflightReport,
+} from '../services/ExportPreflightValidation';
 
 /**
  * @deprecated Use StrictExportAssetManifest from ExportManifestValidation instead
@@ -72,9 +76,45 @@ export const exportScene = async (
   options: ExportOptions
 ): Promise<void> => {
   try {
-    // ─── PHASE 1: PREFLIGHT VALIDATION ───────────────────────────────────
+    // ─── PHASE 1: COMPREHENSIVE PREFLIGHT VALIDATION ───────────────────────────────────
     const modelsToExport = models.filter(m => options.selectedIds.includes(m.id));
-    preflightValidation(modelsToExport);
+
+    // Run comprehensive preflight validation with error categorization and recovery suggestions
+    const preflightReport = runPreflightValidation(modelsToExport, options.selectedIds, {
+      format: options.format,
+      layers: options.layers,
+      prefabs: options.prefabs,
+      paths: options.paths,
+      collisionZones: options.collisionZones,
+      terrain: options.terrain,
+      cameraPresets: options.cameraPresets,
+      cameraPaths: options.cameraPaths,
+      qualitySettings: options.qualitySettings,
+      threeScene,
+    });
+
+    // If validation failed with blocking errors, abort export with diagnostic report
+    if (!preflightReport.isValid) {
+      const errorLines = [
+        `Export failed with ${preflightReport.blockingErrors.length} blocking error(s):\n`,
+        ...preflightReport.blockingErrors.map(e => `  [${e.code}] ${e.message}`),
+      ];
+      if (preflightReport.recommendations.length > 0) {
+        errorLines.push('\nRecommendations:');
+        errorLines.push(...preflightReport.recommendations.map(r => `  • ${r}`));
+      }
+      throw new Error(errorLines.join('\n'));
+    }
+
+    // If validation passed but has warnings, log them for user awareness
+    if (preflightReport.warnings.length > 0) {
+      console.warn(
+        `Export proceeding with ${preflightReport.warnings.length} warning(s):\n`,
+        preflightReport.warnings.map(w => `  [${w.code}] ${w.message}`).join('\n'),
+        '\nRecommendations:',
+        preflightReport.recommendations.join('\n')
+      );
+    }
 
     // ─── PHASE 2: BUILD MANIFEST ─────────────────────────────────────────
     const zip = new JSZip();
