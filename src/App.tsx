@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { Sparkles } from 'lucide-react';
 import Sidebar from './components/Sidebar';
@@ -31,6 +31,7 @@ import { AssetMetrics } from './types/performance';
 import { DeviceProfile, QualitySettings } from './types/quality';
 import { DEFAULT_PROFILES } from './constants/qualityProfiles';
 import { pluginManager } from './services/PluginManager';
+import { validatePluginScenePatch } from './services/PluginSceneValidation';
 import { DiagnosticsPlugin } from './plugins/DiagnosticsPlugin';
 import { useAICommandExecutor } from './hooks/useAICommandExecutor';
 
@@ -137,7 +138,7 @@ const DEFAULT_CAMERA_PRESETS: CameraPreset[] = [
 ];
 
 export default function App() {
-  const { assets } = useAssetLibrary();
+  const { assets, addAsset } = useAssetLibrary();
   const { presets: materialPresets } = useMaterialLibrary();
   const { presets: environmentPresets } = useEnvironmentLibrary();
 
@@ -475,67 +476,85 @@ export default function App() {
   const [uiVisible, setUiVisible] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [pluginUIVersion, setPluginUIVersion] = useState(0);
+  const sceneSubscribersRef = useRef(new Set<(state: any) => void>());
+  const sceneStateRef = useRef({
+    models: appState.models,
+    layers: appState.layers,
+    paths: appState.paths,
+    prefabs: appState.prefabs,
+  });
+  const assetsRef = useRef(assets);
+  const addAssetRef = useRef(addAsset);
 
-  // Initialize Plugin System with working API
+  useEffect(() => {
+    assetsRef.current = assets;
+    addAssetRef.current = addAsset;
+  }, [assets, addAsset]);
+
+  // Initialize Plugin System with stable API bridge
   useEffect(() => {
     pluginManager.initCoreApi({
-      getSceneState: () => ({
-        models: appState.models,
-        layers: appState.layers,
-        paths: appState.paths,
-        prefabs: appState.prefabs,
-      }),
+      getSceneState: () => sceneStateRef.current,
       updateSceneState: (updater: (state: any) => any) => {
-        // Actually execute the update instead of just logging
-        const currentState = {
-          models: appState.models,
-          layers: appState.layers,
-          paths: appState.paths,
-          prefabs: appState.prefabs,
-        };
-        const newState = updater(currentState);
+        if (typeof updater !== 'function') {
+          throw new Error('updateSceneState requires an updater function');
+        }
+        const currentState = sceneStateRef.current;
+        const newState = validatePluginScenePatch(updater(currentState));
 
         // Apply updates to app state
-        if (newState.models !== currentState.models) {
+        if (newState?.models !== undefined && newState.models !== currentState.models) {
           setModels(newState.models);
         }
-        if (newState.layers !== currentState.layers) {
+        if (newState?.layers !== undefined && newState.layers !== currentState.layers) {
           setLayers(newState.layers);
         }
-        if (newState.paths !== currentState.paths) {
+        if (newState?.paths !== undefined && newState.paths !== currentState.paths) {
           setAppState(prev => ({ ...prev, paths: newState.paths }));
         }
-        if (newState.prefabs !== currentState.prefabs) {
+        if (newState?.prefabs !== undefined && newState.prefabs !== currentState.prefabs) {
           setPrefabs(newState.prefabs);
         }
       },
       subscribeToScene: (listener: any) => {
-        // Call with current state
-        listener({
-          models: appState.models,
-          layers: appState.layers,
-          paths: appState.paths,
-          prefabs: appState.prefabs,
-        });
-
-        // TODO: In a production app, implement proper pub/sub system
-        // For now, just return a no-op unsubscribe
-        return () => {};
+        listener(sceneStateRef.current);
+        sceneSubscribersRef.current.add(listener);
+        return () => {
+          sceneSubscribersRef.current.delete(listener);
+        };
       },
-      getAssetLibrary: () => [], // TODO: Wire asset library
-      addAsset: () => {}, // TODO: Wire asset addition
+      getAssetLibrary: () => assetsRef.current,
+      addAsset: (assetPayload: { file: File; category: any }) => {
+        if (!assetPayload?.file || !assetPayload?.category) {
+          throw new Error('addAsset requires { file, category }');
+        }
+        addAssetRef.current(assetPayload.file, assetPayload.category);
+      },
       triggerUIUpdate: () => {
         setPluginUIVersion(v => v + 1);
-      },
-      savePluginData: (id: string, data: any) => {
-        // TODO: Persist plugin data to storage
-        console.log(`Plugin data saved for ${id}`, data);
       }
     });
 
     // Register built-in plugins
     pluginManager.register(DiagnosticsPlugin);
-  }, [appState.models, appState.layers, appState.paths, appState.prefabs, setModels, setLayers, setPrefabs, setAppState]);
+  }, [setModels, setLayers, setPrefabs, setAppState]);
+
+  useEffect(() => {
+    const snapshot = {
+      models: appState.models,
+      layers: appState.layers,
+      paths: appState.paths,
+      prefabs: appState.prefabs,
+    };
+    sceneStateRef.current = snapshot;
+    sceneSubscribersRef.current.forEach(listener => {
+      try {
+        listener(snapshot);
+      } catch (error) {
+        console.warn('Plugin scene subscriber failed', error);
+      }
+    });
+  }, [appState.models, appState.layers, appState.paths, appState.prefabs]);
 
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
@@ -1175,11 +1194,6 @@ export default function App() {
                 cameraPresets={cameraPresets}
                 activeCameraPathId={activeCameraPathId}
                 cameraPaths={cameraPaths}
-                onCameraChange={(updates) => {
-                  if (activeCameraPresetId) {
-                    setCameraPresets(prev => prev.map(p => p.id === activeCameraPresetId ? { ...p, ...updates } : p));
-                  }
-                }}
                 layers={layers}
                 selectionFilter={selectionFilter}
                 terrain={appState.terrain}
