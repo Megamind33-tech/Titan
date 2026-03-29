@@ -1263,19 +1263,15 @@ export default function App() {
       // Load imported scene data if available
       if (sceneData) {
         try {
-          // Load objects
+          // Precompute all scene updates so we apply state consistently.
           const importedObjects = loadImportedObjects(sceneData);
-          setModels(importedObjects);
-
-          // Load environment if available
           const importedEnvironment = loadImportedEnvironment(sceneData, environment);
-          setEnvironment(importedEnvironment);
-
-          // Load camera paths if available
           const importedPaths = loadImportedPaths(sceneData);
-          if (importedPaths.length > 0) {
-            setCameraPaths(importedPaths);
-          }
+
+          // Apply scene updates only after all parsing succeeds
+          setModels(importedObjects);
+          setEnvironment(importedEnvironment);
+          setCameraPaths(importedPaths);
 
           // Create and log summary
           const summary = createImportSummary(sceneData, importedSession.metadata.rootPath || 'unknown');

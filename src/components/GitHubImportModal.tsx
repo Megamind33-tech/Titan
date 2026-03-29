@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { useGitHubImport, getPhaseMessage, ImportCompleteData } from '../hooks/useGitHubImport';
+import { useGitHubImport, getPhaseMessage } from '../hooks/useGitHubImport';
 import { ProjectSession } from '../types/projectSession';
 import { getFormattedHistory, getRecentImportUrls } from '../services/ImportHistoryService';
 
@@ -109,16 +109,14 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
           {!confirmationMode && !result && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Repository URL or owner/repo
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">GitHub repository</label>
                 <div className="relative">
                   <input
                     type="text"
                     value={repoInput}
                     onChange={handleInputChange}
                     onFocus={() => setShowSuggestions(true)}
-                    placeholder="e.g., babylonjs/Babylon.js or owner/your-swim26-game"
+                    placeholder="Paste https://github.com/owner/repo or owner/repo"
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                     disabled={isLoading}
                   />
@@ -149,13 +147,13 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   )}
                 </div>
                 <p className="mt-2 text-xs text-gray-500">
-                  Public repositories are fully supported. Private repositories can be accessed with a personal access token.
+                  Public repositories work out of the box. For private repositories, add a read-only token below.
                 </p>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  GitHub token (optional, required for private repos)
+                  Personal access token (optional)
                 </label>
                 <input
                   type="password"
@@ -167,7 +165,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   disabled={isLoading}
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  Token is used only for this import session and is never persisted.
+                  Used only for this import attempt and never saved by Titan.
                 </p>
               </div>
 
@@ -206,7 +204,7 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                   disabled={!repoInput.trim() || isLoading}
                 >
-                  Check Repository
+                  Continue
                 </button>
               </div>
             </div>

@@ -165,7 +165,7 @@ export class GitHubConnector {
           success: false,
           error: new GitHubConnectorError(
             GitHubConnectorErrorType.UNAUTHORIZED,
-            'This is a private repository. Private repo support requires authentication (coming in a future update).',
+            'This is a private repository. Add a GitHub personal access token with read access and retry.',
             { repo: `${ref.owner}/${ref.repo}` }
           ),
         };
@@ -393,14 +393,16 @@ export class GitHubConnector {
         }
       }
 
-      // Success if we got at least repo metadata and at least one manifest file
-      if (result.files.size > 0) {
+      // Success requires at least one import-relevant structured file.
+      // README by itself should not be considered import-ready.
+      const hasImportableContent = Array.from(result.files.keys()).some(file => file !== 'README.md');
+      if (hasImportableContent) {
         result.success = true;
       } else {
         result.errors.push(
           new GitHubConnectorError(
             GitHubConnectorErrorType.FILE_NOT_FOUND,
-            'No supported manifest files found in repository',
+            'No supported import files found in repository (expected manifest/config/package metadata).',
             { supportedFiles: SUPPORTED_MANIFEST_FILES }
           )
         );
