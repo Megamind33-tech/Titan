@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Layers, History, Download, Trash2, Plus, Globe, Settings, List, LayoutGrid, Shield } from 'lucide-react';
+import { Box, Layers, History, Download, Trash2, Plus, Globe, Settings, List, LayoutGrid, Shield, Github } from 'lucide-react';
 import { Layer } from '../types/layers';
 import { ModelData } from '../App';
 import { Prefab } from '../types/prefabs';
@@ -44,6 +44,7 @@ interface SidebarProps {
   onExportClick: () => void;
   onHistoryClick: () => void;
   onAssetLibraryClick: () => void;
+  onImportFromGitHubClick: () => void;
   pluginUIVersion?: number;
   // Collision zones
   collisionZones: CollisionZone[];
@@ -84,6 +85,7 @@ export default function Sidebar({
   onExportClick,
   onHistoryClick,
   onAssetLibraryClick,
+  onImportFromGitHubClick,
   pluginUIVersion,
   collisionZones,
   onAddZone,
@@ -318,6 +320,10 @@ export default function Sidebar({
             </div>
 
             <div className="space-y-2 pt-4 border-t border-white/5">
+              <button onClick={onImportFromGitHubClick} className="w-full hardware-button flex items-center gap-2 justify-center py-2 border-white/10 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 hover:border-blue-500/30">
+                <Github className="w-3 h-3" />
+                <span>IMPORT_GITHUB</span>
+              </button>
               <button onClick={onHistoryClick} className="w-full hardware-button flex items-center gap-2 justify-center py-2">
                 <History className="w-3 h-3" />
                 <span>HISTORY</span>

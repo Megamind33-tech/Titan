@@ -8,6 +8,7 @@ import Toolbar from './components/Toolbar';
 import ExportModal, { ExportOptions } from './components/ExportModal';
 import VersionHistoryModal from './components/VersionHistoryModal';
 import AssetBrowser from './components/AssetBrowser/AssetBrowser';
+import { GitHubImportModal } from './components/GitHubImportModal';
 import GeminiAssistant from './components/GeminiAssistant';
 import SceneLayerPanel from './components/SceneLayerPanel';
 import PrefabCreationModal from './components/PrefabCreationModal';
@@ -195,6 +196,7 @@ export default function App() {
   const [projectSession, setProjectSession] = useState<ProjectSession | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string | null>(null);
+  const [isGitHubImportModalOpen, setIsGitHubImportModalOpen] = useState(false);
 
   const setModels = useCallback((newModels: ModelData[] | ((prev: ModelData[]) => ModelData[]), options?: { transient?: boolean, replace?: boolean }) => {
     setAppState(prev => ({
@@ -1208,6 +1210,30 @@ export default function App() {
     }
   }, []);
 
+  const handleGitHubImportComplete = useCallback((importedSession: ProjectSession) => {
+    try {
+      // Activate the project with the imported session's metadata
+      const activation = activateProjectForEditor(importedSession.metadata);
+
+      // Set the session and metadata
+      setProjectSession(importedSession);
+      setProjectMetadata(importedSession.metadata);
+      setActiveProject(activation);
+      setShowOnboarding(false);
+
+      // Persist the session
+      persistProjectSession(importedSession);
+
+      // Close the modal
+      setIsGitHubImportModalOpen(false);
+
+      console.log(`[GitHub Import] Successfully imported project: ${importedSession.projectName} from ${importedSession.metadata.rootPath}`);
+    } catch (error) {
+      console.error('[GitHub Import] Error handling import completion:', error);
+      // Keep modal open so user can see error or retry
+    }
+  }, []);
+
   const selectedModel = models.find(m => m.id === selectedModelId);
 
   return (
@@ -1308,6 +1334,7 @@ export default function App() {
                 onExportClick={() => setIsExportModalOpen(true)}
                 onHistoryClick={() => setIsHistoryModalOpen(true)}
                 onAssetLibraryClick={() => setIsAssetBrowserOpen(true)}
+                onImportFromGitHubClick={() => setIsGitHubImportModalOpen(true)}
                 pluginUIVersion={pluginUIVersion}
                 collisionZones={appState.collisionZones}
                 onAddZone={handleAddZone}
@@ -1438,6 +1465,12 @@ export default function App() {
               guidance={getProjectSelectionGuidance(projectMetadata)}
               onCreateProject={handleCreateProjectSession}
               onOpenExisting={handleOpenLastProjectSession}
+            />
+
+            <GitHubImportModal
+              isOpen={isGitHubImportModalOpen}
+              onImportComplete={handleGitHubImportComplete}
+              onClose={() => setIsGitHubImportModalOpen(false)}
             />
 
             <ExportModal 
