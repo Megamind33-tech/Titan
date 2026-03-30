@@ -1,6 +1,6 @@
 
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { EnvironmentPreset, EnvironmentCategory, DEFAULT_ENVIRONMENT, POOL_INDOOR_BRIGHT, POOL_COMPETITION, OUTDOOR_SUNSET } from '../types/environment';
+import { EnvironmentPreset, EnvironmentCategory, DEFAULT_ENVIRONMENT, POOL_INDOOR_BRIGHT, POOL_COMPETITION, OUTDOOR_SUNSET, CINEMATIC_NIGHT, REALISTIC_STUDIO } from '../types/environment';
 
 interface EnvironmentLibraryContextType {
   presets: EnvironmentPreset[];
@@ -21,7 +21,9 @@ const INITIAL_PRESETS: EnvironmentPreset[] = [
   DEFAULT_ENVIRONMENT,
   POOL_INDOOR_BRIGHT,
   POOL_COMPETITION,
-  OUTDOOR_SUNSET
+  OUTDOOR_SUNSET,
+  CINEMATIC_NIGHT,
+  REALISTIC_STUDIO
 ];
 
 export function EnvironmentLibraryProvider({ children }: { children: React.ReactNode }) {

@@ -12,6 +12,7 @@ interface SceneCameraControllerProps {
   activeCameraPresetId: string | null;
   cameraPresets: CameraPreset[];
   activeCameraPathId: string | null;
+  previewCameraPathId: string | null;
   cameraPaths: CameraPath[];
 }
 
@@ -23,6 +24,7 @@ export function SceneCameraController({
   activeCameraPresetId,
   cameraPresets,
   activeCameraPathId,
+  previewCameraPathId,
   cameraPaths,
 }: SceneCameraControllerProps) {
   const { camera } = useThree();
@@ -42,11 +44,13 @@ export function SceneCameraController({
   [activeCameraPresetId, cameraPresets]);
 
   const activePath = useMemo(() =>
-    cameraPaths.find(p => p.id === activeCameraPathId),
-  [activeCameraPathId, cameraPaths]);
+    cameraPaths.find(p => p.id === previewCameraPathId),
+  [previewCameraPathId, cameraPaths]);
+
+  const lastPresetId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (activePreset && !activePath) {
+    if (activeCameraPresetId && activeCameraPresetId !== lastPresetId.current && activePreset && !activePath) {
       camera.position.set(...activePreset.position);
       if (controlsRef.current) {
         controlsRef.current.target.set(...activePreset.target);
@@ -57,21 +61,25 @@ export function SceneCameraController({
         camera.far = activePreset.far;
         camera.updateProjectionMatrix();
       }
+      lastPresetId.current = activeCameraPresetId;
     }
-  }, [activePreset, activePath, camera]);
+  }, [activeCameraPresetId, activePreset, activePath, camera]);
 
   useEffect(() => {
-    if (selectedModelId && !activePath) {
+    if (selectedModelId && !activePath && focusTrigger > 0) {
       const model = models.find(m => m.id === selectedModelId);
       if (model) {
         focusTarget.current.set(model.position[0], model.position[1], model.position[2]);
         setIsFocusing(true);
       }
     }
-  }, [selectedModelId, focusTrigger, activePath, models]);
+  }, [focusTrigger]); // ONLY run when focusTrigger changes!
 
   useFrame((state, delta) => {
     if (!controlsRef.current) return;
+
+    // Always update controls if damping is enabled
+    controlsRef.current.update();
 
     if (activePath && activePath.points.length > 1) {
       const { points, interpolation, loop } = activePath;
@@ -113,18 +121,17 @@ export function SceneCameraController({
         }
       }
     } else if (isFocusing) {
-      controlsRef.current.target.lerp(focusTarget.current, delta * 5);
+      controlsRef.current.target.lerp(focusTarget.current, delta * 10); // Increased focus speed
       if (controlsRef.current.target.distanceTo(focusTarget.current) < 0.01) {
         setIsFocusing(false);
       }
     }
 
     if (!activePath) {
+      // Soft ground constraint instead of hard set
       if (camera.position.y < 0.1) camera.position.y = 0.1;
       if (controlsRef.current.target.y < 0) controlsRef.current.target.y = 0;
     }
-
-    controlsRef.current.update();
   });
 
   return (
@@ -132,6 +139,11 @@ export function SceneCameraController({
       ref={controlsRef}
       makeDefault
       enabled={!isDragging && !activePath}
+      enableDamping={true}
+      dampingFactor={0.1} // Increased damping for more responsiveness
+      rotateSpeed={0.8}
+      zoomSpeed={1.2}
+      panSpeed={0.8}
       enablePan={!activePreset?.indoorRestrictions}
       enableZoom
       enableRotate
@@ -141,6 +153,10 @@ export function SceneCameraController({
       maxDistance={activePreset?.orbitLimits?.maxDistance ?? 1000}
       minAzimuthAngle={activePreset?.orbitLimits?.minAzimuth ?? -Infinity}
       maxAzimuthAngle={activePreset?.orbitLimits?.maxAzimuth ?? Infinity}
+      onStart={() => {
+        // Cancel focusing if user starts manual interaction
+        if (isFocusing) setIsFocusing(false);
+      }}
     />
   );
 }

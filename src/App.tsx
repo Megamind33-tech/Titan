@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { Sparkles } from 'lucide-react';
+import { useMediaQuery } from './hooks/useMediaQuery';
+import { Menu, X as CloseIcon, Settings as SettingsIcon, Layers as LayersIcon, Box as BoxIcon, LayoutGrid as LayoutGridIcon, List as ListIcon, Shield as ShieldIcon, Github, Download, History as HistoryIcon, Trash2, Plus, Eye, EyeOff } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Scene from './components/Scene';
 import InspectorPanel from './components/InspectorPanel';
@@ -14,6 +16,7 @@ import GeminiAssistant from './components/GeminiAssistant';
 import SceneLayerPanel from './components/SceneLayerPanel';
 import PrefabCreationModal from './components/PrefabCreationModal';
 import AssetReplacementModal from './components/AssetReplacementModal';
+import SettingsModal from './components/SettingsModal';
 import { useUndoRedo } from './hooks/useUndoRedo';
 import { useMaterialLibrary } from './hooks/useMaterialLibrary';
 import { useEnvironmentLibrary } from './hooks/useEnvironmentLibrary';
@@ -112,6 +115,7 @@ interface AppState {
   activeCameraPresetId: string | null;
   cameraPaths: CameraPath[];
   activeCameraPathId: string | null;
+  previewCameraPathId: string | null;
   layers: Layer[];
   terrain: TerrainData;
   paths: Path[];
@@ -175,8 +179,19 @@ export default function App() {
     environment: DEFAULT_ENVIRONMENT,
     cameraPresets: DEFAULT_CAMERA_PRESETS,
     activeCameraPresetId: 'default-orbit',
-    cameraPaths: [],
+    cameraPaths: [{
+      id: 'intro-path',
+      name: 'Introduction Path',
+      category: 'Cinematic Showcase',
+      points: [
+        { id: 'p1', position: [5, 5, 5], target: [0, 0, 0], duration: 2 },
+        { id: 'p2', position: [-5, 5, 5], target: [0, 0, 0], duration: 2 }
+      ],
+      loop: true,
+      interpolation: 'smooth'
+    }],
     activeCameraPathId: null,
+    previewCameraPathId: null,
     layers: DEFAULT_LAYERS,
     terrain: {
       heightMap: Array(64).fill(0).map(() => Array(64).fill(0)),
@@ -199,10 +214,26 @@ export default function App() {
   const activeCameraPresetId = appState.activeCameraPresetId;
   const cameraPaths = appState.cameraPaths;
   const activeCameraPathId = appState.activeCameraPathId;
+  const previewCameraPathId = appState.previewCameraPathId;
   const layers = appState.layers;
 
   const [selectionFilter, setSelectionFilter] = useState<string[]>(['model', 'light', 'camera', 'environment', 'helper']);
   const [tagFilter, setTagFilter] = useState<string>('');
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [mobileActiveTab, setMobileActiveTab] = useState<'scene' | 'sidebar' | 'inspector'>('scene');
+
+  // Sync mobileActiveTab with panel visibility
+  useEffect(() => {
+    if (isMobile) {
+      setSidebarOpen(mobileActiveTab === 'sidebar');
+      setInspectorOpen(mobileActiveTab === 'inspector');
+    } else {
+      setSidebarOpen(true);
+      setInspectorOpen(true);
+    }
+  }, [isMobile, mobileActiveTab]);
   const [preSoloLayers, setPreSoloLayers] = useState<Layer[] | null>(null);
   const [placementPrefabId, setPlacementPrefabId] = useState<string | null>(null);
   const [projectMetadata, setProjectMetadata] = useState<ProjectMetadataProbe>({});
@@ -211,6 +242,7 @@ export default function App() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [sessionRecoveryMessage, setSessionRecoveryMessage] = useState<string | null>(null);
   const [isGitHubImportModalOpen, setIsGitHubImportModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [pendingImportRepoRef, setPendingImportRepoRef] = useState<string>('');
 
   const { activateFromMetadata, activateWithSession, updateSessionVersion } = useProjectActivationCoordinator({
@@ -372,17 +404,37 @@ export default function App() {
 
     const prefabModels = selectedModels.map(m => {
       const isRoot = m.id === root.id;
-      const newPosition: [number, number, number] = isRoot
-        ? [0, 0, 0]
-        : [m.position[0] - root.position[0], m.position[1] - root.position[1], m.position[2] - root.position[2]];
+      const hasParentInSelection = m.parentId && selectedModelIds.includes(m.parentId);
+      
+      let newPosition: [number, number, number];
+      let newParentId: string | null = null;
+
+      if (isRoot) {
+        newPosition = [0, 0, 0];
+        newParentId = null;
+      } else if (hasParentInSelection) {
+        // Already relative to its parent which is also in the prefab
+        newPosition = m.position;
+        newParentId = idMap[m.parentId!];
+      } else {
+        // Not hierarchical in selection, make it relative to the root
+        newPosition = [m.position[0] - root.position[0], m.position[1] - root.position[1], m.position[2] - root.position[2]];
+        newParentId = idMap[root.id];
+      }
+
       return {
         ...m,
         id: idMap[m.id],
-        parentId: m.parentId && idMap[m.parentId] ? idMap[m.parentId] : null,
+        parentId: newParentId,
         childrenIds: m.childrenIds?.map(cid => idMap[cid]).filter(Boolean) as string[],
         position: newPosition,
         isPrefabRoot: isRoot
       };
+    });
+
+    // Update childrenIds for the root (and others) based on the new parentIds
+    prefabModels.forEach(pm => {
+      pm.childrenIds = prefabModels.filter(m => m.parentId === pm.id).map(m => m.id);
     });
 
     const newPrefab: Prefab = {
@@ -407,24 +459,28 @@ export default function App() {
     if (!prefab) return;
 
     const instanceId = `instance-${Date.now()}`;
+    const idMap: Record<string, string> = {};
+    prefab.models.forEach(pm => {
+      idMap[pm.id] = crypto.randomUUID();
+    });
+
     const newModels: ModelData[] = prefab.models.map(pm => {
       const isRoot = pm.isPrefabRoot;
       return {
         ...(pm as any),
-        id: crypto.randomUUID(),
+        id: idMap[pm.id],
         authoredId: generateAuthoredId(),  // New authoredId for prefab instance
         prefabId: prefab.id,
         prefabInstanceId: instanceId,
-        position: (isRoot ? position : [
-          (pm.position as [number, number, number])[0] + position[0],
-          (pm.position as [number, number, number])[1] + position[1],
-          (pm.position as [number, number, number])[2] + position[2]
-        ]) as [number, number, number],
+        parentId: pm.parentId ? idMap[pm.parentId] : null,
+        childrenIds: pm.childrenIds?.map(cid => idMap[cid]).filter(Boolean) as string[],
+        position: isRoot ? position : pm.position,
         layerId: 'env'
       } as ModelData;
     });
 
     setModels(prev => [...prev, ...newModels]);
+    setPlacementPrefabId(null); // Exit placement mode
   }, [placementPrefabId, prefabs, setModels]);
 
   const handleDeletePrefab = useCallback((id: string) => {
@@ -432,24 +488,32 @@ export default function App() {
   }, [setPrefabs]);
 
   const handleApplyToPrefab = useCallback((instanceId: string, prefabId: string) => {
-    const instanceRoot = models.find(m => m.id === instanceId);
-    if (!instanceRoot || !instanceRoot.prefabInstanceId) return;
+    const clickedModel = models.find(m => m.id === instanceId);
+    if (!clickedModel || !clickedModel.prefabInstanceId) return;
 
-    const instanceModels = models.filter(m => m.prefabInstanceId === instanceRoot.prefabInstanceId);
+    const instanceModels = models.filter(m => m.prefabInstanceId === clickedModel.prefabInstanceId);
+    const instanceRoot = instanceModels.find(m => m.isPrefabRoot) || clickedModel;
     const prefab = prefabs.find(p => p.id === prefabId);
     if (!prefab) return;
+
+    // Map of instance IDs to prefab IDs for internal prefab references
+    const instanceToPrefabIdMap: Record<string, string> = {};
+    instanceModels.forEach(im => {
+      const prefabModel = prefab.models.find(pm => pm.name === im.name);
+      instanceToPrefabIdMap[im.id] = prefabModel?.id || crypto.randomUUID();
+    });
 
     // Update prefab definition
     const updatedPrefabModels = instanceModels.map(im => {
       const isRoot = im.isPrefabRoot;
-      const prefabModel = prefab.models.find(pm => pm.name === im.name);
-      
-      const { id, prefabId: pid, prefabInstanceId: piid, isPrefabRoot: ipr, overriddenProperties, ...rest } = im;
+      const { id, prefabId: pid, prefabInstanceId: piid, isPrefabRoot: ipr, overriddenProperties, parentId, childrenIds, ...rest } = im;
       
       return {
         ...rest,
-        id: prefabModel?.id || crypto.randomUUID(),
-        position: isRoot ? [0, 0, 0] : [im.position[0] - instanceRoot.position[0], im.position[1] - instanceRoot.position[1], im.position[2] - instanceRoot.position[2]],
+        id: instanceToPrefabIdMap[im.id],
+        parentId: parentId ? instanceToPrefabIdMap[parentId] : null,
+        childrenIds: childrenIds?.map(cid => instanceToPrefabIdMap[cid]).filter(Boolean) as string[],
+        position: isRoot ? [0, 0, 0] : im.position, // Already relative if hierarchical
         isPrefabRoot: isRoot
       } as ModelData;
     });
@@ -478,20 +542,23 @@ export default function App() {
   }, [models, prefabs, setModels, setPrefabs]);
 
   const handleResetInstanceOverrides = useCallback((instanceId: string) => {
-    const instanceRoot = models.find(m => m.id === instanceId);
-    if (!instanceRoot || !instanceRoot.prefabInstanceId || !instanceRoot.prefabId) return;
+    const clickedModel = models.find(m => m.id === instanceId);
+    if (!clickedModel || !clickedModel.prefabInstanceId || !clickedModel.prefabId) return;
 
-    const prefab = prefabs.find(p => p.id === instanceRoot.prefabId);
+    const instanceModels = models.filter(m => m.prefabInstanceId === clickedModel.prefabInstanceId);
+    const instanceRoot = instanceModels.find(m => m.isPrefabRoot) || clickedModel;
+    const prefab = prefabs.find(p => p.id === clickedModel.prefabId);
     if (!prefab) return;
 
     setModels(prev => prev.map(m => {
-      if (m.prefabInstanceId === instanceRoot.prefabInstanceId) {
+      if (m.prefabInstanceId === clickedModel.prefabInstanceId) {
         const prefabModel = prefab.models.find(pm => pm.name === m.name);
         if (prefabModel) {
-          const { id, isPrefabRoot, parentId, childrenIds, ...rest } = prefabModel;
+          const { id, isPrefabRoot, parentId, childrenIds, position, ...rest } = prefabModel;
           return {
             ...m,
             ...rest,
+            position: isPrefabRoot ? m.position : position, // Keep root's world position
             overriddenProperties: []
           };
         }
@@ -512,6 +579,7 @@ export default function App() {
   const [isAssetBrowserOpen, setIsAssetBrowserOpen] = useState(false);
   const [assetBrowserMode, setAssetBrowserMode] = useState<'place' | 'replace'>('place');
   const [threeScene, setThreeScene] = useState<THREE.Scene | null>(null);
+  const [threeCamera, setThreeCamera] = useState<THREE.Camera | null>(null);
   const [uiVisible, setUiVisible] = useState(true);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [pluginUIVersion, setPluginUIVersion] = useState(0);
@@ -598,12 +666,13 @@ export default function App() {
         activeCameraPresetId: savedState.cameraSettings?.activePresetId ?? 'default-orbit',
         cameraPaths: savedState.cameraSettings?.paths ?? [],
         activeCameraPathId: savedState.cameraSettings?.activePathId ?? null,
+        previewCameraPathId: null,
         layers: savedState.layers ?? DEFAULT_LAYERS,
         terrain: savedState.terrain ?? { heightMap: Array(64).fill(0).map(() => Array(64).fill(0)), materialMap: Array(64).fill(0).map(() => Array(64).fill('grass')), size: 64, resolution: 64 },
         paths: savedState.paths ?? [],
         collisionZones: savedState.collisionZones ?? [],
-        activeProfileId: 'high',
-        customProfile: DEFAULT_PROFILES[2].settings
+        activeProfileId: savedState.qualitySettings?.activeProfileId ?? 'high',
+        customProfile: savedState.qualitySettings?.customProfile ?? DEFAULT_PROFILES[2].settings
       }, { replace: true });
     },
     setProjectMetadata,
@@ -866,18 +935,20 @@ export default function App() {
       activeCameraPresetId,
       cameraPaths,
       activeCameraPathId,
+      previewCameraPathId: null,
       layers,
       terrain: appState.terrain,
       paths: appState.paths,
       collisionZones: appState.collisionZones,
+      qualitySettings: { activeProfileId: appState.activeProfileId, customProfile: appState.customProfile },
     },
     projectMetadata,
     isInitialLoad,
-    applyLoadedState: (nextState) => {
+    applyLoadedState: (nextState: any) => {
       setAppState({
         ...nextState,
-        activeProfileId: 'high',
-        customProfile: DEFAULT_PROFILES[2].settings,
+        activeProfileId: nextState.qualitySettings?.activeProfileId ?? 'high',
+        customProfile: nextState.qualitySettings?.customProfile ?? DEFAULT_PROFILES[2].settings,
       });
     },
     onVersionMetadata: (metadataProbe, versionId) => {
@@ -967,6 +1038,7 @@ export default function App() {
         environment: importedEnvironment,
         cameraPaths: importedPaths,
         activeCameraPathId: null,
+        previewCameraPathId: null,
       }), { replace: true });
     },
     clearSelection: () => {
@@ -979,256 +1051,299 @@ export default function App() {
   const selectedModel = models.find(m => m.id === selectedModelId);
   const activeProjectSummary = useActiveProjectSummary(activeProject);
 
+  const projectName = projectSession?.projectName;
+
   return (
-          <div className="w-full h-screen flex flex-col relative overflow-hidden bg-bg-dark font-sans selection:bg-blue-500/30">
-            {/* Menu Bar */}
-            <MenuBar
-              onImportClick={() => {
-                setPendingImportRepoRef('');
-                setIsGitHubImportModalOpen(true);
-              }}
-              onImportFromHistoryClick={(repoRef) => {
-                setPendingImportRepoRef(repoRef);
-                setIsGitHubImportModalOpen(true);
-              }}
+          <div className="w-full h-[100dvh] flex flex-col relative overflow-hidden bg-bg-dark font-sans selection:bg-blue-500/30">
+      {/* Top Menu Bar */}
+      {!isMobile && (
+        <MenuBar
+          onImportClick={() => {
+            setPendingImportRepoRef('');
+            setIsGitHubImportModalOpen(true);
+          }}
+          onImportFromHistoryClick={(repoRef) => {
+            setPendingImportRepoRef(repoRef);
+            setIsGitHubImportModalOpen(true);
+          }}
+          onExportClick={() => setIsExportModalOpen(true)}
+          onNewProject={() => setShowOnboarding(true)}
+        />
+      )}
+
+      {/* Mobile Top Bar */}
+      {isMobile && (
+        <div className="h-14 bg-[#0d0e10] border-b border-white/5 flex items-center justify-between px-4 z-[100]">
+          <div className="flex items-center gap-2">
+            <BoxIcon className="w-5 h-5 text-blue-500" />
+            <span className="text-xs font-mono font-bold tracking-widest uppercase">{projectName || 'TITAN_ENGINE'}</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setIsGitHubImportModalOpen(true)} className="p-2 text-white/50 hover:text-white">
+              <Github className="w-5 h-5" />
+            </button>
+            <button onClick={() => setIsSettingsOpen(true)} className="p-2 text-white/50 hover:text-white">
+              <SettingsIcon className="w-5 h-5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* UI Toggle Button */}
+      <button
+        onClick={() => setUiVisible(!uiVisible)}
+        className="fixed bottom-20 right-4 md:bottom-4 md:right-4 z-[150] p-3 bg-black/50 backdrop-blur border border-white/10 rounded-full text-white/70 hover:text-white hover:bg-black/70 transition-all shadow-lg"
+        title={uiVisible ? "Hide UI" : "Show UI"}
+      >
+        {uiVisible ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+      </button>
+
+      {/* Main Content */}
+      <div className="flex-1 flex relative overflow-hidden">
+        {/* Sidebar */}
+        {uiVisible && (
+          <div className={`
+            ${isMobile ? 'fixed inset-0 z-[110] transition-transform duration-300' : 'relative'}
+            ${isMobile && !sidebarOpen ? '-translate-x-full' : 'translate-x-0'}
+          `}>
+            <Sidebar 
+              onLoadModel={handleLoadModel} 
+              onClearScene={handleClearScene}
+              models={models}
+              layers={layers}
+              selectedModelId={selectedModelId}
+              onSelectModel={setSelectedModelId}
+              onUpdateModel={handleUpdateModel}
+              onUpdateLayer={handleUpdateLayer}
+              onAddLayer={handleAddLayer}
+              onDeleteLayer={handleDeleteLayer}
+              onSoloLayer={handleSoloLayer}
+              onUnhideAllLayers={handleUnhideAllLayers}
+              isSoloActive={!!preSoloLayers}
+              prefabs={prefabs}
+              onPlacePrefab={handlePlacePrefab}
+              onCreatePrefabClick={() => setIsPrefabModalOpen(true)}
+              onDeletePrefab={handleDeletePrefab}
+              canCreatePrefab={selectedModelIds.length > 0}
+              selectionFilter={selectionFilter}
+              onUpdateSelectionFilter={setSelectionFilter}
+              tagFilter={tagFilter}
+              onUpdateTagFilter={setTagFilter}
+              onScaleChange={handleScaleChange}
+              gridReceiveShadow={gridReceiveShadow}
+              onGridReceiveShadowChange={setGridReceiveShadow}
+              shadowSoftness={shadowSoftness}
+              onShadowSoftnessChange={setShadowSoftness}
               onExportClick={() => setIsExportModalOpen(true)}
-              onNewProject={() => setShowOnboarding(true)}
+              onHistoryClick={() => setIsHistoryModalOpen(true)}
+              onAssetLibraryClick={() => setIsAssetBrowserOpen(true)}
+              onImportFromGitHubClick={() => setIsGitHubImportModalOpen(true)}
+              pluginUIVersion={pluginUIVersion}
+              collisionZones={appState.collisionZones}
+              onAddZone={handleAddZone}
+              onUpdateZone={handleUpdateZone}
+              onDeleteZone={handleDeleteZone}
+              capabilities={activeProject.activeCapabilities}
+              isMobile={isMobile}
+              onClose={() => setMobileActiveTab('scene')}
             />
+          </div>
+        )}
+        
+        <div className="flex-1 h-full relative flex flex-col min-w-0">
+          {uiVisible && selectedModel && (
+            <Toolbar 
+              transformMode={transformMode}
+              onTransformModeChange={setTransformMode}
+              snapEnabled={snapEnabled}
+              onSnapEnabledChange={setSnapEnabled}
+              groundSnap={groundSnap}
+              onGroundSnapChange={setGroundSnap}
+              translationSnap={translationSnap}
+              onTranslationSnapChange={setTranslationSnap}
+              rotationSnap={rotationSnap}
+              onRotationSnapChange={setRotationSnap}
+              scaleSnap={scaleSnap}
+              onScaleSnapChange={setScaleSnap}
+              isMobile={isMobile}
+              inspectorOpen={inspectorOpen}
+            />
+          )}
 
-            {/* Main Content */}
-            <div className="flex-1 flex relative overflow-hidden">
-              {/* Top Bar / Global Actions */}
-              <div className="absolute top-4 left-4 z-50 flex gap-2">
-              <button
-                onClick={() => setUiVisible(!uiVisible)}
-                className="bg-[#151619]/90 backdrop-blur-md px-4 py-2 hover:bg-white/5 border border-white/10 rounded transition-all duration-200 flex items-center gap-2 group"
+          {/* Mobile Scene Overlay Controls */}
+          {isMobile && mobileActiveTab === 'scene' && (
+            <div className="absolute top-4 left-4 flex flex-col gap-2 z-20 pointer-events-none">
+              <button 
+                onClick={() => setMobileActiveTab('sidebar')}
+                className="p-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-lg text-white/70 pointer-events-auto"
               >
-                <span className="text-[10px] uppercase font-mono tracking-widest text-white/40 group-hover:text-white/80">{uiVisible ? 'HIDE_INTERFACE' : 'SHOW_INTERFACE'}</span>
+                <LayersIcon className="w-5 h-5" />
               </button>
-              
-              {uiVisible && (
-                <>
-                  {activeProjectSummary.canAuthorMaterials && <button
-                    onClick={() => {
-                      setAssetBrowserMode('place');
-                      setIsAssetBrowserOpen(true);
-                    }}
-                    className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded border border-white/20 shadow-[0_0_15px_rgba(255,255,255,0.1)] flex items-center gap-2 transition-all group"
-                  >
-                    <Sparkles className="w-3 h-3 text-white/50 group-hover:text-white" />
-                    <span className="text-[10px] font-mono uppercase tracking-[0.2em] font-bold">ASSET_LIBRARY</span>
-                  </button>}
-                  <div className="bg-[#151619]/90 backdrop-blur-md px-3 py-2 border border-white/10 rounded" data-testid="active-project-summary">
-                    <div className="text-[9px] uppercase font-mono tracking-widest text-white/50">ACTIVE PROJECT</div>
-                    <div className="text-[10px] font-mono text-white/80">{activeProjectSummary.profileName}</div>
-                    <div className="text-[9px] font-mono text-white/40">Runtime: {activeProjectSummary.runtimeTargetLabel}</div>
-                    <div className="text-[9px] font-mono text-white/35">Pipeline: {activeProjectSummary.adapterName}</div>
-                    <div className="text-[9px] font-mono text-white/35">Connection: {activeProjectSummary.bridgeId}</div>
-                    <div className="text-[9px] font-mono text-white/30">Profile selection: {activeProjectSummary.activationMode}</div>
-                  </div>
-                  <div className="flex bg-[#151619]/90 backdrop-blur-md p-1 gap-1 border border-white/10 rounded">
-                    <button
-                      onClick={undo}
-                      disabled={!canUndo}
-                      className="p-2 hover:bg-white/10 rounded disabled:opacity-10 transition-colors text-white/50 hover:text-white"
-                      title="Undo (Ctrl+Z)"
-                    >
-                      <span className="text-[10px] font-mono">UNDO</span>
-                    </button>
-                    <div className="w-px h-4 bg-white/5 self-center" />
-                    <button
-                      onClick={redo}
-                      disabled={!canRedo}
-                      className="p-2 hover:bg-white/10 rounded disabled:opacity-10 transition-colors text-white/50 hover:text-white"
-                      title="Redo (Ctrl+Y)"
-                    >
-                      <span className="text-[10px] font-mono">REDO</span>
-                    </button>
-                  </div>
-                </>
-              )}
             </div>
+          )}
 
-            {sessionRecoveryMessage && (
-              <div className="absolute top-20 left-4 z-50 bg-amber-500/20 border border-amber-400/40 rounded px-3 py-2 text-[10px] font-mono text-amber-100 flex items-center gap-3" data-testid="project-session-recovery-banner">
-                <span>{sessionRecoveryMessage} Review your setup before continuing.</span>
-                <button
-                  onClick={() => setShowOnboarding(true)}
-                  className="px-2 py-1 border border-amber-200/40 rounded text-amber-50 hover:bg-amber-400/20"
-                >
-                  REVIEW PROJECT SETUP
-                </button>
-              </div>
-            )}
-
-            {uiVisible && (
-              <Sidebar 
-                onLoadModel={handleLoadModel} 
-                onClearScene={handleClearScene}
-                models={models}
-                layers={layers}
-                selectedModelId={selectedModelId}
-                onSelectModel={setSelectedModelId}
-                onUpdateModel={handleUpdateModel}
-                onUpdateLayer={handleUpdateLayer}
-                onAddLayer={handleAddLayer}
-                onDeleteLayer={handleDeleteLayer}
-                onSoloLayer={handleSoloLayer}
-                onUnhideAllLayers={handleUnhideAllLayers}
-                isSoloActive={!!preSoloLayers}
-                prefabs={prefabs}
-                onPlacePrefab={handlePlacePrefab}
-                onCreatePrefabClick={() => setIsPrefabModalOpen(true)}
-                onDeletePrefab={handleDeletePrefab}
-                canCreatePrefab={selectedModelIds.length > 0}
-                selectionFilter={selectionFilter}
-                onUpdateSelectionFilter={setSelectionFilter}
-                tagFilter={tagFilter}
-                onUpdateTagFilter={setTagFilter}
-                onScaleChange={handleScaleChange}
-                gridReceiveShadow={gridReceiveShadow}
-                onGridReceiveShadowChange={setGridReceiveShadow}
-                shadowSoftness={shadowSoftness}
-                onShadowSoftnessChange={setShadowSoftness}
-                onExportClick={() => setIsExportModalOpen(true)}
-                onHistoryClick={() => setIsHistoryModalOpen(true)}
-                onAssetLibraryClick={() => setIsAssetBrowserOpen(true)}
-                onImportFromGitHubClick={() => setIsGitHubImportModalOpen(true)}
-                pluginUIVersion={pluginUIVersion}
-                collisionZones={appState.collisionZones}
-                onAddZone={handleAddZone}
-                onUpdateZone={handleUpdateZone}
-                onDeleteZone={handleDeleteZone}
-                capabilities={activeProject.activeCapabilities}
-              />
-            )}
-            
-            <div className="flex-1 h-full relative">
-              {uiVisible && selectedModel && (
-                <Toolbar 
-                  transformMode={transformMode}
-                  onTransformModeChange={setTransformMode}
-                  snapEnabled={snapEnabled}
-                  onSnapEnabledChange={setSnapEnabled}
-                  groundSnap={groundSnap}
-                  onGroundSnapChange={setGroundSnap}
-                  translationSnap={translationSnap}
-                  onTranslationSnapChange={setTranslationSnap}
-                  rotationSnap={rotationSnap}
-                  onRotationSnapChange={setRotationSnap}
-                  scaleSnap={scaleSnap}
-                  onScaleSnapChange={setScaleSnap}
-                />
-              )}
-              <Scene 
-                models={models} 
-                selectedModelId={selectedModelId}
-                focusTrigger={focusTrigger}
-                transformMode={transformMode} 
-                snapEnabled={snapEnabled}
-                groundSnap={groundSnap}
-                translationSnap={translationSnap}
-                rotationSnap={rotationSnap}
-                scaleSnap={scaleSnap}
-                onModelDimensionsChange={handleModelDimensionsChange}
-                onModelPositionChange={handlePositionChange}
-                onModelRotationChange={handleRotationChange}
-                onModelScaleChange={handleScaleChangeFull}
-                onTransformEnd={handleTransformEnd}
-                onSelect={setSelectedModelId}
-                onDropAsset={handlePlaceAsset}
-                placementPrefabId={placementPrefabId}
-                onPlacePrefabAtPosition={handlePlacePrefabAtPosition}
-                gridReceiveShadow={gridReceiveShadow}
-                shadowSoftness={shadowSoftness}
-                tagFilter={tagFilter}
-                environment={environment}
-                onSceneReady={setThreeScene}
-                activeCameraPresetId={activeCameraPresetId}
-                cameraPresets={cameraPresets}
-                activeCameraPathId={activeCameraPathId}
-                cameraPaths={cameraPaths}
-                layers={layers}
-                selectionFilter={selectionFilter}
-                terrain={appState.terrain}
-                paths={appState.paths}
-              />
+          {isMobile && mobileActiveTab === 'scene' && (
+            <div className="absolute top-4 right-4 flex flex-col gap-2 z-20 pointer-events-none">
+              <button 
+                onClick={() => setMobileActiveTab('inspector')}
+                className={`p-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-lg transition-colors pointer-events-auto ${selectedModelId ? 'text-blue-400' : 'text-white/30'}`}
+              >
+                <SettingsIcon className="w-5 h-5" />
+              </button>
             </div>
+          )}
 
-            {uiVisible && (
-              <InspectorPanel
-                model={selectedModel ?? null}
-                models={models}
-                layers={layers}
-                onUpdateModel={handleUpdateModel}
-                onReset={handleResetModel}
-                onFocus={handleFocus}
-                onDuplicate={handleDuplicateModel}
-                onDelete={handleDeleteModel}
-                onReplaceAsset={() => {
-                  setAssetBrowserMode('replace');
-                  setIsAssetBrowserOpen(true);
-                }}
-                prefabs={prefabs}
-                onApplyToPrefab={handleApplyToPrefab}
-                onResetInstanceOverrides={handleResetInstanceOverrides}
-                capabilities={activeProject.activeCapabilities}
-                environment={environment}
-                onUpdateEnvironment={setEnvironment}
-                cameraPresets={cameraPresets}
-                activeCameraPresetId={activeCameraPresetId ?? ''}
-                onUpdateCameraPresets={setCameraPresets}
-                onSetActiveCameraPreset={setActiveCameraPresetId}
-                cameraPaths={cameraPaths}
-                activeCameraPathId={activeCameraPathId}
-                onUpdateCameraPaths={setCameraPaths}
-                onSetActiveCameraPath={setActiveCameraPathId}
-                onCaptureCamera={() => {
-                  if (!threeScene) return null;
-                  const camera = threeScene.getObjectByName('scene-camera') as THREE.PerspectiveCamera || threeScene.children.find(c => c instanceof THREE.PerspectiveCamera);
-                  if (!camera) return null;
-                  
-                  // Find the OrbitControls target
-                  // In our Scene.tsx, we use OrbitControls from @react-three/drei
-                  // It's hard to get the target directly from here without a ref
-                  // But we can assume the target is what the camera is looking at
-                  const target = new THREE.Vector3();
-                  camera.getWorldDirection(target);
-                  target.multiplyScalar(10).add(camera.position); // Heuristic
-                  
-                  return {
-                    position: [camera.position.x, camera.position.y, camera.position.z] as [number, number, number],
-                    target: [target.x, target.y, target.z] as [number, number, number],
-                    fov: camera.fov
-                  };
-                }}
-              />
-            )}
+          <Scene 
+            models={models} 
+            selectedModelId={selectedModelId}
+            focusTrigger={focusTrigger}
+            transformMode={transformMode} 
+            snapEnabled={snapEnabled}
+            groundSnap={groundSnap}
+            translationSnap={translationSnap}
+            rotationSnap={rotationSnap}
+            scaleSnap={scaleSnap}
+            onModelDimensionsChange={handleModelDimensionsChange}
+            onModelPositionChange={handlePositionChange}
+            onModelRotationChange={handleRotationChange}
+            onModelScaleChange={handleScaleChangeFull}
+            onTransformEnd={handleTransformEnd}
+            onSelect={setSelectedModelId}
+            onDropAsset={handlePlaceAsset}
+            placementPrefabId={placementPrefabId}
+            onPlacePrefabAtPosition={handlePlacePrefabAtPosition}
+            gridReceiveShadow={gridReceiveShadow}
+            shadowSoftness={shadowSoftness}
+            tagFilter={tagFilter}
+            environment={environment}
+            onSceneReady={(scene, camera) => {
+              setThreeScene(scene);
+              setThreeCamera(camera);
+            }}
+            activeCameraPresetId={activeCameraPresetId}
+            cameraPresets={cameraPresets}
+            activeCameraPathId={activeCameraPathId}
+            previewCameraPathId={previewCameraPathId}
+            cameraPaths={cameraPaths}
+            onUpdateCameraPaths={(val) => setAppState(prev => ({
+              ...prev,
+              cameraPaths: typeof val === 'function' ? val(prev.cameraPaths) : val
+            }))}
+            layers={layers}
+            selectionFilter={selectionFilter}
+            terrain={appState.terrain}
+            paths={appState.paths}
+            onTransformModeChange={setTransformMode}
+            activeProfileId={appState.activeProfileId}
+            customProfile={appState.customProfile}
+          />
+        </div>
 
-            {uiVisible && (
-              <GeminiAssistant 
-                context={{
-                  models,
-                  selectedModelId,
-                  layers,
-                  environment,
-                  activeCameraPresetId,
-                  cameraPresets
-                }}
-                onExecuteCommand={handleExecuteAICommand}
-              />
-            )}
-
-            <ProjectOnboardingModal
-              isOpen={showOnboarding}
-              guidance={getProjectSelectionGuidance(projectMetadata)}
-              onCreateProject={handleCreateProjectSession}
-              onOpenExisting={handleOpenLastProjectSession}
-              onImportFromGitHub={() => {
-                setShowOnboarding(false);
-                setIsGitHubImportModalOpen(true);
+        {uiVisible && (
+          <div className={`
+            ${isMobile ? 'fixed inset-0 z-[110] transition-transform duration-300' : 'relative'}
+            ${isMobile && !inspectorOpen ? 'translate-x-full' : 'translate-x-0'}
+          `}>
+            <InspectorPanel
+              model={selectedModel ?? null}
+              models={models}
+              layers={layers}
+              onUpdateModel={handleUpdateModel}
+              onReset={handleResetModel}
+              onFocus={handleFocus}
+              onDuplicate={handleDuplicateModel}
+              onDelete={handleDeleteModel}
+              onReplaceAsset={() => {
+                setAssetBrowserMode('replace');
+                setIsAssetBrowserOpen(true);
               }}
+              prefabs={prefabs}
+              onApplyToPrefab={handleApplyToPrefab}
+              onResetInstanceOverrides={handleResetInstanceOverrides}
+              capabilities={activeProject.activeCapabilities}
+              environment={environment}
+              onUpdateEnvironment={setEnvironment}
+              cameraPresets={cameraPresets}
+              activeCameraPresetId={activeCameraPresetId ?? ''}
+              onUpdateCameraPresets={setCameraPresets}
+              onSetActiveCameraPreset={setActiveCameraPresetId}
+              cameraPaths={cameraPaths}
+              activeCameraPathId={activeCameraPathId}
+              previewCameraPathId={previewCameraPathId}
+              onUpdateCameraPaths={setCameraPaths}
+              onSetActiveCameraPath={setActiveCameraPathId}
+              onSetPreviewCameraPath={(id) => setAppState(prev => ({ ...prev, previewCameraPathId: id }))}
+              onCaptureCamera={() => {
+                if (!threeCamera || !(threeCamera instanceof THREE.PerspectiveCamera)) return null;
+                
+                const target = new THREE.Vector3();
+                threeCamera.getWorldDirection(target);
+                target.multiplyScalar(10).add(threeCamera.position); // Heuristic
+                
+                return {
+                  position: [threeCamera.position.x, threeCamera.position.y, threeCamera.position.z] as [number, number, number],
+                  target: [target.x, target.y, target.z] as [number, number, number],
+                  fov: threeCamera.fov
+                };
+              }}
+              isMobile={isMobile}
+              onClose={() => setMobileActiveTab('scene')}
             />
+          </div>
+        )}
+      </div>
+
+      {/* Mobile Bottom Navigation */}
+      {isMobile && (
+        <div className="h-16 bg-[#0d0e10] border-t border-white/5 flex items-center justify-around px-2 z-[100]">
+          <button 
+            onClick={() => setMobileActiveTab('sidebar')}
+            className={`flex flex-col items-center gap-1 flex-1 py-1 ${mobileActiveTab === 'sidebar' ? 'text-blue-500' : 'text-white/30'}`}
+          >
+            <LayersIcon className="w-5 h-5" />
+            <span className="text-[8px] font-mono uppercase tracking-widest">Explorer</span>
+          </button>
+          <button 
+            onClick={() => setMobileActiveTab('scene')}
+            className={`flex flex-col items-center gap-1 flex-1 py-1 ${mobileActiveTab === 'scene' ? 'text-blue-500' : 'text-white/30'}`}
+          >
+            <LayoutGridIcon className="w-5 h-5" />
+            <span className="text-[8px] font-mono uppercase tracking-widest">Scene</span>
+          </button>
+          <button 
+            onClick={() => setMobileActiveTab('inspector')}
+            className={`flex flex-col items-center gap-1 flex-1 py-1 ${mobileActiveTab === 'inspector' ? 'text-blue-500' : 'text-white/30'}`}
+          >
+            <SettingsIcon className="w-5 h-5" />
+            <span className="text-[8px] font-mono uppercase tracking-widest">Inspector</span>
+          </button>
+        </div>
+      )}
+
+      {uiVisible && (
+        <GeminiAssistant 
+          context={{
+            models,
+            selectedModelId,
+            layers,
+            environment,
+            activeCameraPresetId,
+            cameraPresets
+          }}
+          onExecuteCommand={handleExecuteAICommand}
+        />
+      )}
+
+      <ProjectOnboardingModal
+        isOpen={showOnboarding}
+        guidance={getProjectSelectionGuidance(projectMetadata)}
+        onCreateProject={handleCreateProjectSession}
+        onOpenExisting={handleOpenLastProjectSession}
+        onImportFromGitHub={() => {
+          setShowOnboarding(false);
+          setIsGitHubImportModalOpen(true);
+        }}
+      />
 
       <GitHubImportModal
         isOpen={isGitHubImportModalOpen}
@@ -1240,43 +1355,51 @@ export default function App() {
         }}
       />
 
-            <ExportModal 
-              isOpen={isExportModalOpen}
-              onClose={() => setIsExportModalOpen(false)}
-              models={models}
-              onExport={handleExport}
-              allowedFormats={exportConfig.allowedFormats}
-              recommendedFormat={exportConfig.recommendedFormat}
-              contextNote={exportConfig.contextNote}
-            />
-            <VersionHistoryModal
-              isOpen={isHistoryModalOpen}
-              onClose={() => setIsHistoryModalOpen(false)}
-              onLoadVersion={handleLoadVersion}
-              onSaveNewVersion={handleSaveVersion}
-            />
-            <AssetBrowser 
-              isOpen={isAssetBrowserOpen}
-              onClose={() => setIsAssetBrowserOpen(false)}
-              onPlaceAsset={assetBrowserMode === 'place' ? handlePlaceAsset : handleReplaceAsset}
-            />
-            <PrefabCreationModal 
-              isOpen={isPrefabModalOpen}
-              onClose={() => setIsPrefabModalOpen(false)}
-              onConfirm={handleCreatePrefab}
-              selectionCount={selectedModelIds.length}
-            />
-            <AssetReplacementModal
-              isOpen={isReplacementModalOpen}
-              onClose={() => {
-                setIsReplacementModalOpen(false);
-                setReplacementAsset(null);
-              }}
-              currentModel={selectedModel ?? null}
-              newAsset={replacementAsset}
-              onConfirm={handleConfirmReplacement}
-            />
-            </div>
-          </div>
+      <SettingsModal 
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        activeProfileId={appState.activeProfileId}
+        onProfileChange={(id) => setAppState(prev => ({ ...prev, activeProfileId: id }))}
+        customSettings={appState.customProfile}
+        onUpdateCustomSettings={(settings) => setAppState(prev => ({ ...prev, customProfile: settings }))}
+      />
+
+      <ExportModal 
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        models={models}
+        onExport={handleExport}
+        allowedFormats={exportConfig.allowedFormats}
+        recommendedFormat={exportConfig.recommendedFormat}
+        contextNote={exportConfig.contextNote}
+      />
+      <VersionHistoryModal
+        isOpen={isHistoryModalOpen}
+        onClose={() => setIsHistoryModalOpen(false)}
+        onLoadVersion={handleLoadVersion}
+        onSaveNewVersion={handleSaveVersion}
+      />
+      <AssetBrowser 
+        isOpen={isAssetBrowserOpen}
+        onClose={() => setIsAssetBrowserOpen(false)}
+        onPlaceAsset={assetBrowserMode === 'place' ? handlePlaceAsset : handleReplaceAsset}
+      />
+      <PrefabCreationModal 
+        isOpen={isPrefabModalOpen}
+        onClose={() => setIsPrefabModalOpen(false)}
+        onConfirm={handleCreatePrefab}
+        selectionCount={selectedModelIds.length}
+      />
+      <AssetReplacementModal
+        isOpen={isReplacementModalOpen}
+        onClose={() => {
+          setIsReplacementModalOpen(false);
+          setReplacementAsset(null);
+        }}
+        currentModel={selectedModel ?? null}
+        newAsset={replacementAsset}
+        onConfirm={handleConfirmReplacement}
+      />
+    </div>
   );
 }

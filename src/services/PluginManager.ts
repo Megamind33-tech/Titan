@@ -1,14 +1,4 @@
 import { Plugin, PluginMetadata, PluginState, PluginAPI, UIExtensionPoint } from '../types/plugin';
-import { resetSceneValidators } from './PluginSceneValidation';
-
-interface PluginCoreApi {
-  getSceneState?: () => any;
-  updateSceneState?: (updater: (state: any) => any) => void;
-  subscribeToScene?: (listener: (state: any) => void) => () => void;
-  getAssetLibrary?: () => any;
-  addAsset?: (asset: any) => void;
-  triggerUIUpdate?: () => void;
-}
 
 class PluginManager {
   private plugins: Map<string, Plugin> = new Map();
@@ -16,51 +6,21 @@ class PluginManager {
   private pluginErrors: Map<string, Error> = new Map();
   private uiExtensions: Map<string, UIExtensionPoint[]> = new Map(); // pluginId -> extensions
   private pluginData: Map<string, any> = new Map(); // pluginId -> data
-  private readonly storageKey = 'plugin_bridge_data';
-  private hasHydratedPluginData = false;
 
   // Provide a way to inject the core editor API
-  private coreApi: PluginCoreApi | null = null;
+  private coreApi: any;
 
-  initCoreApi(api: PluginCoreApi) {
+  initCoreApi(api: any) {
     this.coreApi = api;
-    if (!this.hasHydratedPluginData) {
-      this.hydratePluginData();
-      this.hasHydratedPluginData = true;
-    }
   }
 
-  private hydratePluginData() {
-    try {
-      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(this.storageKey) : null;
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Record<string, any>;
-      Object.entries(parsed).forEach(([pluginId, data]) => {
-        this.pluginData.set(pluginId, data);
-      });
-    } catch (error) {
-      console.warn('Failed to hydrate plugin bridge data', error);
-    }
-  }
-
-  private persistPluginData() {
-    try {
-      if (typeof localStorage === 'undefined') return;
-      const data = Object.fromEntries(this.pluginData.entries());
-      localStorage.setItem(this.storageKey, JSON.stringify(data));
-    } catch (error) {
-      console.warn('Failed to persist plugin bridge data', error);
-    }
-  }
-
-  register(plugin: Plugin): boolean {
+  register(plugin: Plugin) {
     if (this.plugins.has(plugin.metadata.id)) {
-      return false;
+      console.warn(`Plugin ${plugin.metadata.id} is already registered.`);
+      return;
     }
     this.plugins.set(plugin.metadata.id, plugin);
     this.pluginStates.set(plugin.metadata.id, 'registered');
-    this.pluginErrors.delete(plugin.metadata.id);
-    return true;
   }
 
   async load(id: string) {
@@ -76,70 +36,45 @@ class PluginManager {
   }
 
   private createPluginAPI(pluginId: string, permissions: string[]): PluginAPI {
-    const getUIPermissionForExtensionType = (type: UIExtensionPoint['type']) => {
-      if (type === 'panel') return 'ui:panels';
-      if (type === 'toolbar') return 'ui:toolbar';
-      if (type === 'inspector') return 'ui:inspector';
-      if (type === 'menu') return 'ui:menu';
-      return null;
-    };
-
-    const assertUiPermission = (required: string | null) => {
-      if (!required) return;
-      if (!permissions.includes(required)) {
-        throw new Error(`Permission denied: ${required}`);
-      }
-    };
-
     // Create a restricted API based on permissions
     return {
       scene: {
         get: () => {
           if (!permissions.includes('read:scene')) throw new Error('Permission denied: read:scene');
-          if (!this.coreApi?.getSceneState) throw new Error('Scene read is not available');
-          return this.coreApi.getSceneState();
+          return this.coreApi?.getSceneState();
         },
         update: (updater) => {
           if (!permissions.includes('write:scene')) throw new Error('Permission denied: write:scene');
-          if (!this.coreApi?.updateSceneState) throw new Error('Scene update is not available');
-          this.coreApi.updateSceneState(updater);
+          this.coreApi?.updateSceneState(updater);
         },
         subscribe: (listener) => {
           if (!permissions.includes('read:scene')) throw new Error('Permission denied: read:scene');
-          if (!this.coreApi?.subscribeToScene) throw new Error('Scene subscription is not available');
-          return this.coreApi.subscribeToScene(listener);
+          return this.coreApi?.subscribeToScene(listener) || (() => {});
         }
       },
       assets: {
         getLibrary: () => {
           if (!permissions.includes('read:assets')) throw new Error('Permission denied: read:assets');
-          if (!this.coreApi?.getAssetLibrary) throw new Error('Asset library is not available');
-          return this.coreApi.getAssetLibrary();
+          return this.coreApi?.getAssetLibrary();
         },
         addAsset: (asset) => {
           if (!permissions.includes('write:assets')) throw new Error('Permission denied: write:assets');
-          if (!this.coreApi?.addAsset) throw new Error('Asset creation is not available');
-          this.coreApi.addAsset(asset);
+          this.coreApi?.addAsset(asset);
         }
       },
       ui: {
         registerExtension: (ext) => {
-          assertUiPermission(getUIPermissionForExtensionType(ext.type));
           if (!this.uiExtensions.has(pluginId)) {
             this.uiExtensions.set(pluginId, []);
           }
           this.uiExtensions.get(pluginId)!.push(ext);
           // Trigger UI update
-          this.coreApi?.triggerUIUpdate?.();
+          this.coreApi?.triggerUIUpdate();
         },
         unregisterExtension: (extId) => {
           const exts = this.uiExtensions.get(pluginId) || [];
-          const target = exts.find(e => e.id === extId);
-          if (target) {
-            assertUiPermission(getUIPermissionForExtensionType(target.type));
-          }
           this.uiExtensions.set(pluginId, exts.filter(e => e.id !== extId));
-          this.coreApi?.triggerUIUpdate?.();
+          this.coreApi?.triggerUIUpdate();
         }
       },
       data: {
@@ -151,7 +86,8 @@ class PluginManager {
           const data = this.pluginData.get(pluginId) || {};
           data[key] = value;
           this.pluginData.set(pluginId, data);
-          this.persistPluginData();
+          // Notify core to save plugin data
+          this.coreApi?.savePluginData(pluginId, data);
         }
       }
     };
@@ -160,7 +96,6 @@ class PluginManager {
   async activate(id: string) {
     const plugin = this.plugins.get(id);
     if (!plugin) return;
-    if (this.pluginStates.get(id) === 'active') return;
 
     // Check dependencies
     if (plugin.metadata.dependencies) {
@@ -179,7 +114,6 @@ class PluginManager {
 
       const api = this.createPluginAPI(id, plugin.metadata.permissions);
       const context = { api, state: {} };
-      this.uiExtensions.set(id, []);
 
       if (plugin.initialize && this.pluginStates.get(id) === 'loaded') {
         await plugin.initialize(context);
@@ -208,7 +142,7 @@ class PluginManager {
       }
       // Clean up UI extensions
       this.uiExtensions.delete(id);
-      this.coreApi?.triggerUIUpdate?.();
+      this.coreApi?.triggerUIUpdate();
 
       this.pluginStates.set(id, 'initialized');
     } catch (error) {
@@ -216,25 +150,26 @@ class PluginManager {
     }
   }
 
+  resetForTests() {
+    this.plugins.clear();
+    this.pluginStates.clear();
+    this.pluginErrors.clear();
+    this.uiExtensions.clear();
+    this.pluginData.clear();
+    this.coreApi = null;
+  }
+
+  reset() {
+    this.resetForTests();
+  }
+
   async unload(id: string) {
-    const plugin = this.plugins.get(id);
-    if (!plugin) return;
-
-    if (this.pluginStates.get(id) === 'active') {
-      await this.deactivate(id);
-    }
-
-    try {
-      if (plugin.unload) {
-        await plugin.unload();
-      }
-      this.plugins.delete(id);
-      this.pluginStates.delete(id);
-      this.pluginErrors.delete(id);
-      this.uiExtensions.delete(id);
-    } catch (error) {
-      this.handleError(id, error as Error);
-    }
+    await this.deactivate(id);
+    this.plugins.delete(id);
+    this.pluginStates.delete(id);
+    this.pluginErrors.delete(id);
+    this.uiExtensions.delete(id);
+    this.pluginData.delete(id);
   }
 
   private handleError(id: string, error: Error) {
@@ -263,27 +198,6 @@ class PluginManager {
       }
     }
     return allExts;
-  }
-
-  reset(options?: { preservePluginData?: boolean }) {
-    this.plugins.clear();
-    this.pluginStates.clear();
-    this.pluginErrors.clear();
-    this.uiExtensions.clear();
-    if (!options?.preservePluginData) {
-      this.pluginData.clear();
-    }
-    this.coreApi = null;
-    this.hasHydratedPluginData = false;
-
-    // CRITICAL: Reset scene validators when plugin manager resets
-    // Ensures scene validator singleton state doesn't leak between test runs
-    resetSceneValidators();
-  }
-
-  // Test helper alias.
-  resetForTests() {
-    this.reset();
   }
 }
 

@@ -106,7 +106,7 @@ const resolveImportedObjectModels = (sceneData: LoadedSceneData): { models: Mode
 
   for (const obj of sceneData.objects || []) {
     const resolution = resolvePreviewUrl(obj.assetRef?.value, sceneData.metadata.rootPath);
-    if (!resolution.ok) {
+    if (resolution.ok === false) {
       unresolvedCount += 1;
       warnings.push(`${obj.name || obj.id || 'Imported Object'}: ${resolution.reason}`);
       continue;
@@ -309,18 +309,17 @@ export const loadImportedPaths = (sceneData: LoadedSceneData): CameraPath[] => {
       const cameraPath: CameraPath = {
         id: generateAuthoredId(),
         name: importedPath.name || 'Imported Camera Path',
-        points: importedPath.points.map((point: unknown, idx: number) => {
-          const p = (point && typeof point === 'object') ? point as Record<string, unknown> : {};
+        category: 'Cinematic Showcase',
+        points: (importedPath.points as any[]).map((point: any, idx: number) => {
           return ({
             id: generateAuthoredId(),
-            position: toTuple3(p.position, [0, 0, 0]),
-            target: toTuple3(p.target, [0, 0, 0]),
+            position: toTuple3(point.position, [0, 0, 0]),
+            target: toTuple3(point.target, [0, 0, 0]),
             duration: idx === 0 ? 0 : 1000,
           });
         }),
-        duration: importedPath.points.length * 1000,
-        easing: 'linear',
-        autoLoop: false,
+        loop: false,
+        interpolation: 'smooth',
       };
 
       paths.push(cameraPath);

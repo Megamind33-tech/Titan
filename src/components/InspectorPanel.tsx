@@ -59,14 +59,18 @@ interface InspectorPanelProps {
   onSetActiveCameraPreset: (id: string) => void;
   cameraPaths: CameraPath[];
   activeCameraPathId: string | null;
+  previewCameraPathId: string | null;
   onUpdateCameraPaths: (val: CameraPath[] | ((prev: CameraPath[]) => CameraPath[])) => void;
   onSetActiveCameraPath: (id: string | null) => void;
+  onSetPreviewCameraPath: (id: string | null) => void;
   onCaptureCamera: () => { position: [number, number, number], target: [number, number, number], fov: number } | null;
   layers: Layer[];
   prefabs: Prefab[];
   onApplyToPrefab: (instanceId: string, prefabId: string) => void;
   onResetInstanceOverrides: (instanceId: string) => void;
   capabilities?: EditorCapabilityFlags;
+  isMobile?: boolean;
+  onClose?: () => void;
 }
 
 export default function InspectorPanel({ 
@@ -86,14 +90,18 @@ export default function InspectorPanel({
   onSetActiveCameraPreset,
   cameraPaths,
   activeCameraPathId,
+  previewCameraPathId,
   onUpdateCameraPaths,
   onSetActiveCameraPath,
+  onSetPreviewCameraPath,
   onCaptureCamera,
   layers,
   prefabs,
   onApplyToPrefab,
   onResetInstanceOverrides,
-  capabilities
+  capabilities,
+  isMobile = false,
+  onClose
 }: InspectorPanelProps) {
   const [activeTab, setActiveTab] = useState<'object' | 'environment' | 'camera'>('object');
   const [expandedPointId, setExpandedPointId] = useState<string | null>(null);
@@ -340,7 +348,19 @@ export default function InspectorPanel({
   };
 
   return (
-    <div className="w-80 bg-[#151619] text-white z-10 border-l border-white/10 overflow-y-auto h-full flex-shrink-0 text-sm shadow-2xl flex flex-col">
+    <div className={`h-full ${isMobile ? 'w-full' : 'w-80'} bg-[#151619] border-l border-white/5 ${isMobile ? 'pt-4' : 'pt-20'} z-10 flex flex-col flex-shrink-0`}>
+      <div className="px-4 mb-4 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Settings className="w-4 h-4 text-white/50" />
+          <h1 className="text-[11px] font-bold tracking-[0.2em] uppercase font-mono text-white/80">INSPECTOR_CORE</h1>
+        </div>
+        {isMobile && onClose && (
+          <button onClick={onClose} className="p-2 text-white/30 hover:text-white">
+            <Plus className="w-4 h-4 rotate-45" />
+          </button>
+        )}
+      </div>
+
       <div className="flex border-b border-white/10 bg-black/20">
         <button 
           onClick={() => setActiveTab('object')}
@@ -481,7 +501,7 @@ export default function InspectorPanel({
           <div className="pt-2 border-t border-white/5">
             <span className="hardware-label mb-2 block">Add Tag</span>
             <select 
-              className="hardware-input w-full py-2 px-3 text-xs bg-black/40 border-white/10 rounded focus:border-purple-500/50 outline-none transition-all cursor-pointer hover:bg-black/60"
+              className="hardware-input w-full py-2 px-3 text-xs bg-black/40 border-white/10 rounded focus:border-purple-500/50 outline-none transition-all cursor-pointer hover:bg-black/60 mb-2"
               value=""
               onChange={(e) => {
                 if (e.target.value && !(model.behaviorTags || []).includes(e.target.value)) {
@@ -489,7 +509,7 @@ export default function InspectorPanel({
                 }
               }}
             >
-              <option value="" disabled>Select a tag...</option>
+              <option value="" disabled>Select a preset tag...</option>
               <optgroup label="General">
                 <option value="Decorative">Decorative</option>
                 <option value="Structural">Structural</option>
@@ -530,6 +550,36 @@ export default function InspectorPanel({
                 <option value="Water-Related">Water-Related</option>
               </optgroup>
             </select>
+
+            <div className="flex gap-2">
+              <input 
+                type="text"
+                placeholder="Custom tag..."
+                className="hardware-input flex-1 py-1 px-2 text-[10px]"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const val = e.currentTarget.value.trim();
+                    if (val && !(model.behaviorTags || []).includes(val)) {
+                      onUpdateModel(model.id, { behaviorTags: [...(model.behaviorTags || []), val] });
+                      e.currentTarget.value = '';
+                    }
+                  }
+                }}
+              />
+              <button 
+                className="hardware-button px-2 py-1 text-[10px]"
+                onClick={(e) => {
+                  const input = e.currentTarget.previousElementSibling as HTMLInputElement;
+                  const val = input.value.trim();
+                  if (val && !(model.behaviorTags || []).includes(val)) {
+                    onUpdateModel(model.id, { behaviorTags: [...(model.behaviorTags || []), val] });
+                    input.value = '';
+                  }
+                }}
+              >
+                Add
+              </button>
+            </div>
           </div>
         </div>
       </Section>
@@ -1358,13 +1408,21 @@ export default function InspectorPanel({
                           </div>
 
                           <button 
-                            className="w-full py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-[10px] font-mono uppercase tracking-widest flex items-center justify-center gap-2 transition-all"
+                            className={`w-full py-2 ${previewCameraPathId === path.id ? 'bg-red-600 hover:bg-red-500' : 'bg-blue-600 hover:bg-blue-500'} text-white rounded text-[10px] font-mono uppercase tracking-widest flex items-center justify-center gap-2 transition-all`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              // Path is already active, user can see it in scene
+                              if (previewCameraPathId === path.id) {
+                                onSetPreviewCameraPath(null);
+                              } else {
+                                onSetPreviewCameraPath(path.id);
+                              }
                             }}
                           >
-                            <Play className="w-3 h-3" /> Preview Path
+                            {previewCameraPathId === path.id ? (
+                              <>Stop Preview</>
+                            ) : (
+                              <><Play className="w-3 h-3" /> Preview Path</>
+                            )}
                           </button>
                         </div>
                       )}

@@ -47,6 +47,10 @@ export interface EnvironmentPreset {
   exposure: number;
   toneMapping: 'None' | 'Linear' | 'Reinhard' | 'Cineon' | 'ACESFilmic';
   
+  // Realism
+  ssaoEnabled: boolean;
+  softShadowsEnabled: boolean;
+  
   // Performance
   shadowMapSize: 512 | 1024 | 2048 | 4096;
 }
@@ -78,6 +82,8 @@ export const DEFAULT_ENVIRONMENT: EnvironmentPreset = {
   fogType: 'linear',
   exposure: 1,
   toneMapping: 'ACESFilmic',
+  ssaoEnabled: true,
+  softShadowsEnabled: true,
   shadowMapSize: 2048
 };
 
@@ -108,6 +114,8 @@ export const POOL_INDOOR_BRIGHT: EnvironmentPreset = {
   fogType: 'linear',
   exposure: 1.1,
   toneMapping: 'ACESFilmic',
+  ssaoEnabled: true,
+  softShadowsEnabled: true,
   shadowMapSize: 2048
 };
 
@@ -138,6 +146,8 @@ export const POOL_COMPETITION: EnvironmentPreset = {
   fogType: 'linear',
   exposure: 1.0,
   toneMapping: 'ACESFilmic',
+  ssaoEnabled: true,
+  softShadowsEnabled: true,
   shadowMapSize: 4096
 };
 
@@ -168,5 +178,71 @@ export const OUTDOOR_SUNSET: EnvironmentPreset = {
   fogType: 'exp2',
   exposure: 1.2,
   toneMapping: 'ACESFilmic',
+  ssaoEnabled: true,
+  softShadowsEnabled: true,
   shadowMapSize: 2048
+};
+
+export const CINEMATIC_NIGHT: EnvironmentPreset = {
+  id: 'cinematic-night',
+  name: 'Cinematic Night',
+  category: 'Cinematic',
+  ambientColor: '#1e1b4b',
+  ambientIntensity: 0.1,
+  hemisphereColor: '#1e1b4b',
+  hemisphereGroundColor: '#000000',
+  hemisphereIntensity: 0.2,
+  directionalColor: '#6366f1',
+  directionalIntensity: 2.0,
+  directionalPosition: [-20, 30, -20],
+  castShadows: true,
+  shadowBias: -0.0001,
+  shadowNormalBias: 0.05,
+  backgroundType: 'preset',
+  backgroundColor: '#000000',
+  environmentPreset: 'night',
+  environmentIntensity: 0.3,
+  fogEnabled: true,
+  fogColor: '#000000',
+  fogNear: 5,
+  fogFar: 100,
+  fogDensity: 0.02,
+  fogType: 'exp2',
+  exposure: 0.8,
+  toneMapping: 'ACESFilmic',
+  ssaoEnabled: true,
+  softShadowsEnabled: true,
+  shadowMapSize: 2048
+};
+
+export const REALISTIC_STUDIO: EnvironmentPreset = {
+  id: 'realistic-studio',
+  name: 'Realistic Studio',
+  category: 'Studio',
+  ambientColor: '#ffffff',
+  ambientIntensity: 0.1,
+  hemisphereColor: '#ffffff',
+  hemisphereGroundColor: '#2a2b2e',
+  hemisphereIntensity: 0.3,
+  directionalColor: '#ffffff',
+  directionalIntensity: 2.5,
+  directionalPosition: [10, 20, 10],
+  castShadows: true,
+  shadowBias: -0.0005,
+  shadowNormalBias: 0.02,
+  backgroundType: 'color',
+  backgroundColor: '#1a1a1a',
+  environmentPreset: 'studio',
+  environmentIntensity: 1.5,
+  fogEnabled: false,
+  fogColor: '#1a1a1a',
+  fogNear: 1,
+  fogFar: 1000,
+  fogDensity: 0.002,
+  fogType: 'linear',
+  exposure: 1.2,
+  toneMapping: 'ACESFilmic',
+  ssaoEnabled: true,
+  softShadowsEnabled: true,
+  shadowMapSize: 4096
 };

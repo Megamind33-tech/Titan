@@ -13,6 +13,8 @@ interface ToolbarProps {
   onRotationSnapChange: (val: number) => void;
   scaleSnap: number;
   onScaleSnapChange: (val: number) => void;
+  isMobile?: boolean;
+  inspectorOpen?: boolean;
 }
 
 export default function Toolbar({
@@ -27,10 +29,12 @@ export default function Toolbar({
   rotationSnap,
   onRotationSnapChange,
   scaleSnap,
-  onScaleSnapChange
+  onScaleSnapChange,
+  isMobile = false,
+  inspectorOpen = false
 }: ToolbarProps) {
   return (
-    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 items-center pointer-events-none">
+    <div className={`absolute ${isMobile ? 'top-16' : 'top-4'} ${inspectorOpen ? 'left-[calc(50%-10rem)]' : 'left-1/2'} -translate-x-1/2 z-50 flex flex-col gap-2 items-center pointer-events-none`}>
       <div className="bg-[#151619]/90 backdrop-blur-md p-1 rounded border border-white/10 flex gap-1 pointer-events-auto shadow-2xl">
         {(['translate', 'rotate', 'scale'] as const).map(mode => (
           <button

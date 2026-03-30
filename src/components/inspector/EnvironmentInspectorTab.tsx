@@ -82,6 +82,7 @@ export function EnvironmentInspectorTab({ environment, updateEnvironment, handle
           <select className="hardware-input w-full" value={environment.backgroundType} onChange={(e) => updateEnvironment({ backgroundType: e.target.value as any })}>
             <option value="color">Solid Color</option>
             <option value="preset">Environment Preset</option>
+            <option value="skybox">Skybox</option>
           </select>
           {environment.backgroundType === 'color' ? (
             <div className="flex items-center gap-3">
@@ -123,6 +124,24 @@ export function EnvironmentInspectorTab({ environment, updateEnvironment, handle
 
       <InspectorSection title="Post-Processing">
         <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <label className="hardware-label">SSAO (Ambient Occlusion)</label>
+            <button 
+              onClick={() => updateEnvironment({ ssaoEnabled: !environment.ssaoEnabled })} 
+              className={`px-3 py-1 rounded text-[8px] font-mono uppercase tracking-widest transition-all ${environment.ssaoEnabled ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 glow-accent' : 'bg-white/5 text-white/20 border border-white/5'}`}
+            >
+              {environment.ssaoEnabled ? 'ACTIVE' : 'INACTIVE'}
+            </button>
+          </div>
+          <div className="flex items-center justify-between">
+            <label className="hardware-label">Soft Shadows</label>
+            <button 
+              onClick={() => updateEnvironment({ softShadowsEnabled: !environment.softShadowsEnabled })} 
+              className={`px-3 py-1 rounded text-[8px] font-mono uppercase tracking-widest transition-all ${environment.softShadowsEnabled ? 'bg-blue-600/20 text-blue-400 border border-blue-500/30 glow-accent' : 'bg-white/5 text-white/20 border border-white/5'}`}
+            >
+              {environment.softShadowsEnabled ? 'ACTIVE' : 'INACTIVE'}
+            </button>
+          </div>
           <div className="space-y-1">
             <div className="flex justify-between text-[10px] font-mono text-white/40 uppercase tracking-widest"><span>Exposure</span><span className="text-white/80">{environment.exposure.toFixed(1)}</span></div>
             <input type="range" min="0" max="3" step="0.1" className="w-full accent-blue-500 h-1 bg-white/5 rounded-lg appearance-none cursor-pointer" value={environment.exposure} onChange={(e) => updateEnvironment({ exposure: parseFloat(e.target.value) })} />

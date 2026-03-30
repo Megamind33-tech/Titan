@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-// @ts-ignore - GLTFLoader types may not be available in all setups
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
+import { GLTFLoader } from 'three-stdlib';
 
 export interface AssetAnalysis {
   boundingBox: { min: [number, number, number], max: [number, number, number] };
@@ -24,7 +23,7 @@ export async function analyzeAsset(url: string | File): Promise<AssetAnalysis> {
   return new Promise((resolve, reject) => {
     loader.load(
       loadUrl,
-      (gltf: { scene: THREE.Group }) => {
+      (gltf) => {
         const scene = gltf.scene;
         const box = new THREE.Box3().setFromObject(scene);
         const size = new THREE.Vector3();
@@ -72,7 +71,7 @@ export async function analyzeAsset(url: string | File): Promise<AssetAnalysis> {
         });
       },
       undefined,
-      (error: ErrorEvent) => {
+      (error) => {
         if (typeof url !== 'string') {
           URL.revokeObjectURL(loadUrl);
         }

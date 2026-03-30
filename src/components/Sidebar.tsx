@@ -52,6 +52,8 @@ interface SidebarProps {
   onUpdateZone: (id: string, updates: Partial<CollisionZone>) => void;
   onDeleteZone: (id: string) => void;
   capabilities?: EditorCapabilityFlags;
+  isMobile?: boolean;
+  onClose?: () => void;
 }
 
 export default function Sidebar({
@@ -92,6 +94,8 @@ export default function Sidebar({
   onUpdateZone,
   onDeleteZone,
   capabilities,
+  isMobile = false,
+  onClose
 }: SidebarProps) {
   const [activeTab, setActiveTab] = React.useState<'hierarchy' | 'layers' | 'prefabs' | 'zones' | 'settings' | 'plugins'>('layers');
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -111,12 +115,17 @@ export default function Sidebar({
   };
 
   return (
-    <div className="h-full w-72 bg-[#151619] border-r border-white/5 pt-20 z-10 flex flex-col flex-shrink-0">
+    <div className={`h-full ${isMobile ? 'w-full' : 'w-72'} bg-[#151619] border-r border-white/5 ${isMobile ? 'pt-4' : 'pt-20'} z-10 flex flex-col flex-shrink-0`}>
       <div className="px-4 mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Box className="w-4 h-4 text-white/50" />
           <h1 className="text-[11px] font-bold tracking-[0.2em] uppercase font-mono text-white/80">SCENE_EXPLORER</h1>
         </div>
+        {isMobile && onClose && (
+          <button onClick={onClose} className="p-2 text-white/30 hover:text-white">
+            <Plus className="w-4 h-4 rotate-45" />
+          </button>
+        )}
       </div>
 
       {/* Tab bar */}

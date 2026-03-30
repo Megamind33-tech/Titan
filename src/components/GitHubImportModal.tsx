@@ -36,7 +36,18 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
   const [detectionPreview, setDetectionPreview] = useState<ImportPreparationResult | null>(null);
   const [confirmationMode, setConfirmationMode] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
   const pendingAuthTokenRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (suggestionsRef.current && !suggestionsRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const normalizedAuthToken = authToken.trim();
   const hasAuthToken = normalizedAuthToken.length > 0;
@@ -136,129 +147,144 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4">
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+      <div className="bg-[#151619] rounded-xl border border-white/10 shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
         {/* Header */}
-        <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-lg font-semibold text-gray-900">Import from GitHub</h2>
+        <div className="border-b border-white/5 px-6 py-4 flex justify-between items-center bg-black/20">
+          <div className="flex flex-col">
+            <h2 className="text-xs font-mono uppercase tracking-[0.2em] text-white/90">Import Project</h2>
+            <span className="text-[9px] font-mono text-white/30 uppercase tracking-widest mt-0.5">GitHub Connector v2.0</span>
+          </div>
           <button
             onClick={handleClose}
-            className="text-gray-400 hover:text-gray-600"
+            className="text-white/30 hover:text-white transition-colors p-1"
             disabled={isLoading}
           >
-            ✕
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
         </div>
 
         {/* Content */}
-        <div className="px-6 py-6">
+        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
           {/* Initial Input State */}
           {!confirmationMode && !result && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">GitHub repository</label>
+            <div className="space-y-6">
+              <div className="space-y-2">
+                <label className="block text-[10px] font-mono uppercase tracking-widest text-white/50">Repository Reference</label>
                 <div className="relative">
                   <input
                     type="text"
                     value={repoInput}
                     onChange={handleInputChange}
                     onFocus={() => setShowSuggestions(true)}
-                    placeholder="Paste https://github.com/owner/repo or owner/repo"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="OWNER/REPO OR GITHUB URL"
+                    className="hardware-input w-full"
                     disabled={isLoading}
                   />
 
                   {/* Suggestions Dropdown */}
                   {showSuggestions && importHistory.length > 0 && !repoInput && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10">
-                      <div className="p-2 border-b border-gray-200 text-xs font-semibold text-gray-600 bg-gray-50">
-                        Recent Imports
+                    <div ref={suggestionsRef} className="absolute top-full left-0 right-0 mt-2 bg-[#1a1b1e] border border-white/10 rounded-lg shadow-2xl z-50 overflow-hidden">
+                      <div className="px-3 py-2 border-b border-white/5 text-[9px] font-mono uppercase tracking-widest text-white/30 bg-black/20">
+                        Recent History
                       </div>
-                      {importHistory.slice(0, 5).map((entry, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => {
-                            setRepoInput(entry.url);
-                            const parsed = parseGitHubReference(entry.url);
-                            setBranchInput(parsed?.branch || '');
-                            setSubpathInput(parsed?.subpath || '');
-                            setShowSuggestions(false);
-                          }}
-                          className="w-full px-4 py-2 text-left text-xs hover:bg-blue-50 border-b border-gray-100 last:border-b-0 flex justify-between items-center"
-                        >
-                          <div>
-                            <div className="font-medium text-gray-800">{entry.label}</div>
-                            <div className="text-gray-500 text-[10px]">Last: {entry.lastImported}</div>
-                          </div>
-                          <div className="text-gray-400 text-[10px]">×{entry.timesImported}</div>
-                        </button>
-                      ))}
+                      <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                        {importHistory.slice(0, 5).map((entry, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              setRepoInput(entry.url);
+                              const parsed = parseGitHubReference(entry.url);
+                              setBranchInput(parsed?.branch || '');
+                              setSubpathInput(parsed?.subpath || '');
+                              setShowSuggestions(false);
+                            }}
+                            className="w-full px-4 py-3 text-left hover:bg-white/5 border-b border-white/5 last:border-b-0 flex justify-between items-center transition-colors group"
+                          >
+                            <div className="flex flex-col gap-0.5">
+                              <div className="text-[11px] font-mono text-white/80 group-hover:text-white">{entry.label}</div>
+                              <div className="text-[9px] font-mono text-white/30 uppercase tracking-tighter">Last: {entry.lastImported}</div>
+                            </div>
+                            <div className="text-[9px] font-mono text-white/20">×{entry.timesImported}</div>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
-                <p className="mt-2 text-xs text-gray-500">
-                  Public repositories import directly. If the repo is private, add a read-only token below.
+                <p className="text-[9px] font-mono text-white/30 uppercase tracking-wider leading-relaxed">
+                  Public repositories import directly. For private access, provide a scoped token below.
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Branch (optional)</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-mono uppercase tracking-widest text-white/50">Branch</label>
                   <input
                     type="text"
                     value={branchInput}
                     onChange={(e) => setBranchInput(e.target.value)}
-                    placeholder="main"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="MAIN"
+                    className="hardware-input w-full"
                     disabled={isLoading}
                   />
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Folder path (optional)</label>
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-mono uppercase tracking-widest text-white/50">Subpath</label>
                   <input
                     type="text"
                     value={subpathInput}
                     onChange={(e) => setSubpathInput(e.target.value)}
-                    placeholder="scenes/competition"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    placeholder="ROOT"
+                    className="hardware-input w-full"
                     disabled={isLoading}
                   />
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Personal access token (optional)
+              <div className="space-y-2">
+                <label className="block text-[10px] font-mono uppercase tracking-widest text-white/50">
+                  Access Token (Optional)
                 </label>
                 <input
                   type="password"
                   value={authToken}
                   onChange={(e) => setAuthToken(e.target.value)}
-                  placeholder="ghp_..."
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="GHP_..."
+                  className="hardware-input w-full"
                   autoComplete="off"
                   disabled={isLoading}
                 />
-                <p className="mt-1 text-xs text-gray-500">
-                  Used only for this import and never saved by Titan.
+                <p className="text-[9px] font-mono text-white/30 uppercase tracking-wider">
+                  Tokens are used only for this session and are never persisted.
                 </p>
               </div>
 
               {/* Error Display */}
               {error && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm font-medium text-red-900">Couldn’t start import</p>
-                  <p className="text-sm text-red-700 mt-1">{error}</p>
+                <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></div>
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-red-400">Import Error</p>
+                  </div>
+                  <p className="text-[11px] font-mono text-red-300/80 leading-relaxed">{error}</p>
                 </div>
               )}
 
               {/* Progress */}
               {isLoading && (
-                <div className="space-y-2">
-                  <p className="text-sm text-gray-600">{getPhaseMessage(progress.phase, progress.message)}</p>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                <div className="space-y-3 p-4 bg-white/5 rounded-lg border border-white/5">
+                  <div className="flex justify-between items-center">
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-white/70">
+                      {getPhaseMessage(progress.phase, progress.message)}
+                    </p>
+                    <span className="text-[10px] font-mono text-white/40">{progress.percentComplete}%</span>
+                  </div>
+                  <div className="w-full bg-white/5 rounded-full h-1 overflow-hidden">
                     <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      className="bg-white h-full rounded-full transition-all duration-300 shadow-[0_0_10px_rgba(255,255,255,0.3)]"
                       style={{ width: `${progress.percentComplete}%` }}
                     />
                   </div>
@@ -266,20 +292,20 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
               )}
 
               {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t border-white/5">
                 <button
                   onClick={handleClose}
-                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                  className="px-6 py-2.5 text-[10px] font-mono uppercase tracking-[0.2em] text-white/40 hover:text-white transition-colors"
                   disabled={isLoading}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handlePrepareImport}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  className="px-8 py-2.5 bg-white text-black text-[10px] font-mono font-bold uppercase tracking-[0.2em] rounded hover:bg-white/90 disabled:opacity-20 transition-all shadow-xl"
                   disabled={!repoInput.trim() || isLoading}
                 >
-                  {!branchInput.trim() && !subpathInput.trim() && !hasAuthToken ? 'Import Project' : 'Continue'}
+                  {!branchInput.trim() && !subpathInput.trim() && !hasAuthToken ? 'Initialize' : 'Continue'}
                 </button>
               </div>
             </div>
@@ -287,97 +313,108 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
 
           {/* Confirmation State */}
           {confirmationMode && detectionPreview && !result && (
-            <div className="space-y-4">
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm font-medium text-blue-900">Repository checked</p>
-                <p className="text-sm text-blue-700 mt-1">
+            <div className="space-y-6">
+              <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-white/90">Repository Verified</p>
+                </div>
+                <p className="text-[11px] font-mono text-white/50 leading-relaxed">
                   {detectionPreview.detection?.isSWIM26
-                    ? 'This looks like a SWIM26 Babylon project and is ready to import.'
-                    : 'This repo can be imported as a standard Titan scene.'}
+                    ? 'SWIM26 MANIFEST DETECTED. READY FOR ENGINE INITIALIZATION.'
+                    : 'GENERIC REPOSITORY DETECTED. IMPORTING AS RAW ASSETS.'}
                 </p>
               </div>
 
               {/* Import Preview */}
-              <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                <p className="text-sm font-medium text-gray-700 mb-2">What Titan imports</p>
-                <ul className="text-xs text-gray-600 space-y-1">
-                  <li>✓ Project metadata plus supported manifest/config files</li>
-                  <li>✓ Scene objects, asset references, environment, and camera/path data</li>
-                  <li className="text-red-600">✗ Runtime/gameplay code (scripts, boot code, networking)</li>
-                  <li className="text-red-600">✗ Source files outside Titan’s builder scope</li>
-                </ul>
+              <div className="border border-white/5 rounded-lg p-5 bg-black/20">
+                <p className="text-[10px] font-mono uppercase tracking-widest text-white/30 mb-4">Import Scope</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="text-green-500 mt-0.5">✓</div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-mono text-white/80 uppercase tracking-wider">Metadata</span>
+                      <span className="text-[9px] font-mono text-white/30 uppercase">Manifests & Configs</span>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="text-green-500 mt-0.5">✓</div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-mono text-white/80 uppercase tracking-wider">Assets</span>
+                      <span className="text-[9px] font-mono text-white/30 uppercase">Models & Textures</span>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 opacity-40">
+                    <div className="text-red-500 mt-0.5">✗</div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-mono text-white/80 uppercase tracking-wider">Scripts</span>
+                      <span className="text-[9px] font-mono text-white/30 uppercase">Runtime Logic</span>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 opacity-40">
+                    <div className="text-red-500 mt-0.5">✗</div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-mono text-white/80 uppercase tracking-wider">Source</span>
+                      <span className="text-[9px] font-mono text-white/30 uppercase">External Dependencies</span>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               {/* Errors/Warnings */}
               {detectionPreview.errors && detectionPreview.errors.length > 0 && (
-                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm font-medium text-yellow-900 mb-2">Fix before import</p>
-                  <ul className="text-xs text-yellow-700 space-y-1">
+                <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-red-400 mb-3">Critical Issues</p>
+                  <ul className="space-y-2">
                     {detectionPreview.errors.map((err: string, idx: number) => (
-                      <li key={idx}>• {err}</li>
+                      <li key={idx} className="text-[11px] font-mono text-red-300/70 flex gap-2">
+                        <span className="text-red-500">•</span> {err}
+                      </li>
                     ))}
                   </ul>
                 </div>
               )}
 
-              {recentUrls.length > 0 && (
-                <div className="border border-gray-200 rounded-lg p-3">
-                  <p className="text-xs font-medium text-gray-700 mb-2">Recent repository shortcuts</p>
-                  <div className="flex flex-wrap gap-2">
-                    {recentUrls.map((repo) => (
-                      <button
-                        key={repo}
-                        onClick={() => setRepoInput(repo)}
-                        className="px-2 py-1 text-[10px] rounded border border-gray-300 bg-gray-50 hover:bg-gray-100"
-                      >
-                        {repo}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {/* Warnings */}
               {detectionPreview.warnings && detectionPreview.warnings.length > 0 && (
-                <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm font-medium text-blue-900 mb-2">Heads up</p>
-                  <ul className="text-xs text-blue-700 space-y-1">
+                <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-yellow-400 mb-3">System Warnings</p>
+                  <ul className="space-y-2">
                     {detectionPreview.warnings.map((warn: string, idx: number) => (
-                      <li key={idx}>• {warn}</li>
+                      <li key={idx} className="text-[11px] font-mono text-yellow-300/70 flex gap-2">
+                        <span className="text-yellow-500">•</span> {warn}
+                      </li>
                     ))}
                   </ul>
                 </div>
               )}
 
               {/* Action Buttons */}
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t border-white/5">
                 <button
                   onClick={() => {
                     setConfirmationMode(false);
                     setDetectionPreview(null);
                     pendingAuthTokenRef.current = undefined;
                   }}
-                  className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                  className="px-6 py-2.5 text-[10px] font-mono uppercase tracking-[0.2em] text-white/40 hover:text-white transition-colors"
                   disabled={isLoading}
                 >
                   Back
                 </button>
                 <button
                   onClick={handleConfirmImport}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  className="px-8 py-2.5 bg-white text-black text-[10px] font-mono font-bold uppercase tracking-[0.2em] rounded hover:bg-white/90 disabled:opacity-20 transition-all shadow-xl"
                   disabled={detectionPreview.errors?.length > 0 || isLoading}
                 >
-                  {isLoading ? 'Importing...' : 'Import Project'}
+                  {isLoading ? 'Processing...' : 'Execute Import'}
                 </button>
               </div>
 
               {error && (
-                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <p className="text-sm font-medium text-red-900">Import failed</p>
-                  <p className="text-sm text-red-700 mt-1">{error}</p>
-                  <p className="text-xs text-red-700 mt-2">
-                    Next step: go back, update branch/path or paste a fresh read-only token, then retry.
-                  </p>
+                <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-red-400 mb-1">Execution Failed</p>
+                  <p className="text-[11px] font-mono text-red-300/80">{error}</p>
                 </div>
               )}
             </div>
@@ -385,42 +422,50 @@ export const GitHubImportModal: React.FC<GitHubImportModalProps> = ({
 
           {/* Result State */}
           {result && (
-            <div className="space-y-4">
-              <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-lg font-semibold text-green-900">✓ Import complete</p>
-                <p className="text-sm text-green-700 mt-2">
-                  Connected to {result.sourceRepo}
+            <div className="space-y-6">
+              <div className="p-6 bg-green-500/10 border border-green-500/20 rounded-lg text-center">
+                <div className="w-12 h-12 rounded-full bg-green-500/20 flex items-center justify-center mx-auto mb-4">
+                  <div className="w-4 h-4 rounded-full bg-green-500 shadow-[0_0_15px_rgba(34,197,94,0.5)]"></div>
+                </div>
+                <p className="text-xs font-mono uppercase tracking-[0.3em] text-green-400 mb-2">Import Successful</p>
+                <p className="text-[10px] font-mono text-white/40 uppercase tracking-widest">
+                  Source: {result.sourceRepo}
                 </p>
               </div>
 
-              <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                <p className="text-sm font-medium text-gray-700 mb-2">Imported files</p>
-                <ul className="text-xs text-gray-600 space-y-1">
-                  {result.importedFiles.map((file) => (
-                    <li key={file} className="flex items-center gap-2">
-                      <span>•</span> {file}
-                    </li>
-                  ))}
-                </ul>
+              <div className="border border-white/5 rounded-lg p-5 bg-black/20">
+                <p className="text-[10px] font-mono uppercase tracking-widest text-white/30 mb-4">Imported Manifest</p>
+                <div className="max-h-40 overflow-y-auto custom-scrollbar pr-2">
+                  <ul className="space-y-2">
+                    {result.importedFiles.map((file) => (
+                      <li key={file} className="text-[10px] font-mono text-white/60 flex items-center gap-3">
+                        <span className="w-1 h-1 rounded-full bg-white/20"></span>
+                        {file}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
 
               {result.warnings && result.warnings.length > 0 && (
-                <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-sm font-medium text-yellow-900 mb-2">Review after import</p>
-                  <ul className="text-xs text-yellow-700 space-y-1">
+                <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-yellow-400 mb-3">Post-Import Notes</p>
+                  <ul className="space-y-2">
                     {result.warnings.map((warn, idx) => (
-                      <li key={idx}>• {warn}</li>
+                      <li key={idx} className="text-[11px] font-mono text-yellow-300/70 flex gap-2">
+                        <span className="text-yellow-500">•</span> {warn}
+                      </li>
                     ))}
                   </ul>
                 </div>
               )}
 
-              <div className="flex justify-end gap-3 pt-4">
+              <div className="flex justify-center pt-4 border-t border-white/5">
                 <button
                   onClick={handleImportComplete}
-                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  className="w-full sm:w-auto px-12 py-3 bg-green-500 text-black text-[10px] font-mono font-bold uppercase tracking-[0.3em] rounded hover:bg-green-400 transition-all shadow-[0_0_20px_rgba(34,197,94,0.2)]"
                 >
-                  Open Project
+                  Launch Project
                 </button>
               </div>
             </div>

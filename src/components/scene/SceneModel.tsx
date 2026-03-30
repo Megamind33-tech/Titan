@@ -3,6 +3,7 @@ import { useFrame } from '@react-three/fiber';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { MaterialPreset } from '../../types/materials';
+import { useGesture } from '@use-gesture/react';
 
 export interface SceneModelProps {
   id: string;
@@ -32,6 +33,7 @@ export interface SceneModelProps {
   materialRemap?: { [oldMat: string]: string };
   visible?: boolean;
   locked?: boolean;
+  behaviorTags?: string[];
   type?: 'model' | 'environment' | 'light' | 'camera';
   selectionFilter: string[];
   isSelected: boolean;
@@ -43,14 +45,42 @@ export interface SceneModelProps {
   onTransformEnd: () => void;
   onSelect: (id: string) => void;
   onDraggingChanged: (isDragging: boolean) => void;
+  onTransformModeChange: (mode: 'translate' | 'rotate' | 'scale') => void;
+  children?: React.ReactNode;
 }
 
-export function SceneModel({ id, name, url, position, rotation, scale, transformMode, snapEnabled, groundSnap, translationSnap, rotationSnap, scaleSnap, wireframe, lightIntensity, castShadow, receiveShadow, textureUrl, normalMapUrl, colorTint, opacity, roughness, metalness, emissiveColor, material, visible, locked, type, selectionFilter, isSelected, useCustomGizmo, onDimensionsChange, onPositionChange, onRotationChange, onScaleChange, onTransformEnd, onSelect, onDraggingChanged }: SceneModelProps) {
+export function SceneModel({ id, name, url, position, rotation, scale, transformMode, snapEnabled, groundSnap, translationSnap, rotationSnap, scaleSnap, wireframe, lightIntensity, castShadow, receiveShadow, textureUrl, normalMapUrl, colorTint, opacity, roughness, metalness, emissiveColor, material, visible, locked, behaviorTags = [], type, selectionFilter, isSelected, useCustomGizmo, onDimensionsChange, onPositionChange, onRotationChange, onScaleChange, onTransformEnd, onSelect, onDraggingChanged, onTransformModeChange, children }: SceneModelProps) {
   const { scene } = useGLTF(url);
   const clonedScene = useMemo(() => scene.clone(), [scene]);
   const groupRef = useRef<THREE.Group>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const prevDimensions = useRef<{ width: number; height: number; depth: number } | null>(null);
+
+  const bind = useGesture({
+    onDrag: ({ pinching, dragging }) => {
+      if (pinching || !isSelected || locked) return;
+      if (transformMode !== 'translate') onTransformModeChange('translate');
+    },
+    onPinch: ({ pinching, dragging, offset: [d, a], memo }) => {
+      if (dragging || !isSelected || locked) return;
+      
+      if (!memo) {
+        memo = { d: d, a: a };
+      }
+      
+      const deltaD = Math.abs(d - memo.d);
+      const deltaA = Math.abs(a - memo.a);
+      
+      if (deltaD > deltaA) {
+        if (transformMode !== 'scale') onTransformModeChange('scale');
+      } else {
+        if (transformMode !== 'rotate') onTransformModeChange('rotate');
+      }
+      
+      return memo;
+    }
+  }, { drag: { filterTaps: true } });
 
   const handlePointerDown = (e: any) => {
     if (locked) return;
@@ -111,10 +141,13 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
   }, [textureUrl, normalMapUrl, material]);
 
   useEffect(() => {
+    const castShadowEffective = behaviorTags.includes('Decorative') ? false : castShadow;
+    const receiveShadowEffective = behaviorTags.includes('Decorative') ? false : receiveShadow;
+
     clonedScene.traverse((child) => {
       if (child instanceof THREE.Mesh) {
-        child.castShadow = !!castShadow;
-        child.receiveShadow = !!receiveShadow;
+        child.castShadow = !!castShadowEffective;
+        child.receiveShadow = !!receiveShadowEffective;
 
         const mat = child.material as THREE.MeshStandardMaterial;
         if (mat) {
@@ -160,10 +193,10 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
         }
       }
     });
-  }, [clonedScene, wireframe, lightIntensity, castShadow, receiveShadow, loadedTexture, loadedNormalMap, loadedRoughnessMap, loadedMetalnessMap, loadedEmissiveMap, loadedAlphaMap, colorTint, opacity, roughness, metalness, emissiveColor, isSelected, material]);
+  }, [clonedScene, wireframe, lightIntensity, castShadow, receiveShadow, loadedTexture, loadedNormalMap, loadedRoughnessMap, loadedMetalnessMap, loadedEmissiveMap, loadedAlphaMap, colorTint, opacity, roughness, metalness, emissiveColor, isSelected, material, behaviorTags]);
 
   useLayoutEffect(() => {
-    if (!groupRef.current) return;
+    if (!groupRef.current || isDragging) return;
 
     clonedScene.position.set(0, 0, 0);
     clonedScene.scale.set(1, 1, 1);
@@ -200,10 +233,10 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
       prevDimensions.current = newDimensions;
       onDimensionsChangeRef.current(id, newDimensions);
     }
-  }, [clonedScene, id, scale]);
+  }, [clonedScene, id, scale, isDragging]);
 
   useFrame((state) => {
-    if (name.toLowerCase().includes('water')) {
+    if (name.toLowerCase().includes('water') || behaviorTags.includes('Water-Related')) {
       clonedScene.traverse((child) => {
         if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
           if (child.material.map) {
@@ -224,6 +257,7 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
 
   const content = (
     <primitive
+      {...bind()}
       ref={groupRef}
       object={clonedScene}
       position={position}
@@ -231,8 +265,13 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
       scale={scale}
       visible={visible !== false}
       userData={{ id }}
-      onPointerDown={handlePointerDown}
-    />
+      onPointerDown={(e: any) => {
+        if (bind().onPointerDown) bind().onPointerDown(e);
+        handlePointerDown(e);
+      }}
+    >
+      {children}
+    </primitive>
   );
 
   if (isSelected && !locked) {
@@ -245,14 +284,18 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
           scale={100}
           activeAxes={[
             transformMode === 'translate' || transformMode === 'scale',
-            transformMode === 'translate' || transformMode === 'scale',
+            (transformMode === 'translate' && !behaviorTags.includes('Grounded')) || transformMode === 'scale',
             transformMode === 'translate' || transformMode === 'scale'
           ]}
           disableRotations={transformMode !== 'rotate'}
           disableScaling={transformMode !== 'scale'}
           disableAxes={transformMode === 'rotate'}
-          onDragStart={() => onDraggingChanged(true)}
+          onDragStart={() => {
+            setIsDragging(true);
+            onDraggingChanged(true);
+          }}
           onDragEnd={() => {
+            setIsDragging(false);
             onDraggingChanged(false);
             onTransformEnd();
           }}
@@ -266,7 +309,14 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
 
             if (transformMode === 'translate') {
               const snappedX = getSnapValue('translate', newPosition.x);
-              const snappedY = groundSnap ? Math.max(0, getSnapValue('translate', newPosition.y)) : getSnapValue('translate', newPosition.y);
+              let snappedY = (groundSnap || behaviorTags.includes('Grounded')) ? Math.max(0, getSnapValue('translate', newPosition.y)) : getSnapValue('translate', newPosition.y);
+              
+              // Force Y to 0 if Grounded and not dragging? 
+              // Actually, Grounded usually means it should stay on the ground.
+              if (behaviorTags.includes('Grounded') && !isDragging) {
+                snappedY = 0;
+              }
+
               const snappedZ = getSnapValue('translate', newPosition.z);
               onPositionChange(id, [snappedX, snappedY, snappedZ]);
             } else if (transformMode === 'rotate') {
@@ -292,12 +342,17 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
     return (
       <TransformControls
         mode={transformMode}
-        size={1.5}
+        size={0.8}
         translationSnap={snapEnabled ? translationSnap : null}
         rotationSnap={snapEnabled ? rotationSnap : null}
         scaleSnap={snapEnabled ? scaleSnap : null}
-        onMouseDown={() => onDraggingChanged(true)}
+        showY={!(transformMode === 'translate' && behaviorTags.includes('Grounded'))}
+        onMouseDown={() => {
+          setIsDragging(true);
+          onDraggingChanged(true);
+        }}
         onMouseUp={() => {
+          setIsDragging(false);
           onDraggingChanged(false);
           onTransformEnd();
         }}
@@ -310,7 +365,8 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
               let y = getSnapValue('translate', target.object.position.y);
               const z = getSnapValue('translate', target.object.position.z);
 
-              if (groundSnap && y < 0) y = 0;
+              if ((groundSnap || behaviorTags.includes('Grounded')) && y < 0) y = 0;
+              if (behaviorTags.includes('Grounded') && !isDragging) y = 0;
 
               target.object.position.set(x, y, z);
               onPositionChange(id, [x, y, z]);

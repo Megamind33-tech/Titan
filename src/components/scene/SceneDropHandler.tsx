@@ -4,15 +4,31 @@ import { getGroundPlaneIntersection } from '../../hooks/useGroundPlanePlacement'
 
 interface SceneDropHandlerProps {
   onDropAsset: (asset: any, position: [number, number, number]) => void;
+  onDragOver?: (asset: any | null, position: [number, number, number] | null) => void;
 }
 
-export function SceneDropHandler({ onDropAsset }: SceneDropHandlerProps) {
+export function SceneDropHandler({ onDropAsset, onDragOver }: SceneDropHandlerProps) {
   const { camera, raycaster, gl } = useThree();
 
   useEffect(() => {
     const handleDragOver = (e: DragEvent) => {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      
+      if (onDragOver) {
+        const assetData = e.dataTransfer?.getData('application/json');
+        if (!assetData) {
+          onDragOver(null, null);
+          return;
+        }
+        try {
+          const asset = JSON.parse(assetData);
+          const hit = getGroundPlaneIntersection(e, gl.domElement, camera, raycaster);
+          onDragOver(asset, hit);
+        } catch (err) {
+          onDragOver(null, null);
+        }
+      }
     };
 
     const handleDrop = (e: DragEvent) => {

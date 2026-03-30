@@ -14,7 +14,7 @@
  */
 
 import { ModelData } from '../App';
-import { SceneSettings } from '../utils/storageUtils';
+import { SceneSettings, CameraSettings } from '../utils/storageUtils';
 import { Path } from '../types/paths';
 import { CollisionZone } from '../types/collision';
 import { CameraPreset, CameraPath } from '../types/camera';

@@ -6,15 +6,14 @@ import { interpretCommand, AICommand, SceneContext } from '../services/AICommand
 
 interface GeminiAssistantProps {
   context: SceneContext;
-  onExecuteCommand: (command: AICommand, onResult?: (result: { success: boolean; message: string }) => void) => void;
+  onExecuteCommand: (command: AICommand) => void;
 }
 
 interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant';
   text: string;
   commands?: AICommand[];
-  commandResults?: Array<{ commandType: string; success: boolean; message: string }>;
 }
 
 export default function GeminiAssistant({ context, onExecuteCommand }: GeminiAssistantProps) {
@@ -68,32 +67,16 @@ export default function GeminiAssistant({ context, onExecuteCommand }: GeminiAss
   };
 
   const handleExecute = (command: AICommand, messageId: string, index: number) => {
-    // Execute command with result callback
-    onExecuteCommand(command, (result) => {
-      // Add result message to chat
-      const resultMessage: ChatMessage = {
-        id: (Date.now() + Math.random()).toString(),
-        role: 'system',
-        text: result.message,
-        commandResults: [{
-          commandType: command.type,
-          success: result.success,
-          message: result.message
-        }]
-      };
-
-      setMessages(prev => [...prev, resultMessage]);
-
-      // Remove executed command from the display
-      setMessages(prev => prev.map(msg => {
-        if (msg.id === messageId && msg.commands) {
-          const newCommands = [...msg.commands];
-          newCommands.splice(index, 1);
-          return { ...msg, commands: newCommands };
-        }
-        return msg;
-      }));
-    });
+    onExecuteCommand(command);
+    // Mark command as executed (optional, could remove it or disable the button)
+    setMessages(prev => prev.map(msg => {
+      if (msg.id === messageId && msg.commands) {
+        const newCommands = [...msg.commands];
+        newCommands.splice(index, 1);
+        return { ...msg, commands: newCommands };
+      }
+      return msg;
+    }));
   };
 
   return (
@@ -136,11 +119,7 @@ export default function GeminiAssistant({ context, onExecuteCommand }: GeminiAss
 
               {messages.map(msg => (
                 <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                  <div className={`max-w-[85%] p-3 rounded ${
-                    msg.role === 'user' ? 'bg-blue-500/20 text-blue-100 border border-blue-500/30' :
-                    msg.role === 'system' ? (msg.commandResults?.[0]?.success ? 'bg-green-500/10 text-green-200 border border-green-500/20' : 'bg-red-500/10 text-red-200 border border-red-500/20') :
-                    'bg-black/40 text-white/80 border border-white/5'
-                  }`}>
+                  <div className={`max-w-[85%] p-3 rounded ${msg.role === 'user' ? 'bg-blue-500/20 text-blue-100 border border-blue-500/30' : 'bg-black/40 text-white/80 border border-white/5'}`}>
                     <p className="text-[11px] font-mono leading-relaxed whitespace-pre-wrap tracking-tight">
                       {msg.text}
                     </p>

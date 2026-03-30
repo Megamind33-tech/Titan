@@ -59,16 +59,14 @@ export interface CameraPathPoint {
   duration: number; // Duration to reach this point from previous
   pause?: number; // Optional pause at this point
   fov?: number;
+  tangent?: [number, number, number]; // Optional tangent for smooth interpolation
 }
 
 export interface CameraPath {
   id: string;
   name: string;
-  category?: CameraCategory;
+  category: CameraCategory;
   points: CameraPathPoint[];
-  duration?: number;
-  easing?: string;
-  autoLoop?: boolean;
   loop?: boolean;
-  interpolation?: 'linear' | 'smooth';
+  interpolation: 'linear' | 'smooth';
 }

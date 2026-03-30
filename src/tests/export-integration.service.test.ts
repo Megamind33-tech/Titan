@@ -186,7 +186,7 @@ test('preflight validation warns on missing parent reference', () => {
 
 test('preflight validation validates layer references', () => {
   const models = [createValidModel('model-1', { layerId: 'missing-layer' })];
-  const layers = [{ id: 'layer-1', name: 'Layer 1' }];
+  const layers = [{ id: 'layer-1', name: 'Layer 1', visible: true, locked: false, order: 0 }];
 
   const report = runPreflightValidation(models, ['model-1'], {
     format: 'glb',
@@ -288,7 +288,7 @@ test('manifest validation validates asset layer references', () => {
     createValidAsset('asset-1', { layerId: 'layer-1' }),
   ];
   const manifest = createValidManifest(assets);
-  manifest.scene.layers = [{ id: 'layer-2', name: 'Layer 2', visible: true, locked: false }];
+  manifest.scene.layers = [{ id: 'layer-2', name: 'Layer 2', visible: true, locked: false, order: 0 }];
 
   assert.throws(() => validateExportManifest(manifest), /layer|reference/i);
 });
@@ -298,7 +298,7 @@ test('manifest validation accepts valid asset layer references', () => {
     createValidAsset('asset-1', { layerId: 'layer-1' }),
   ];
   const manifest = createValidManifest(assets);
-  manifest.scene.layers = [{ id: 'layer-1', name: 'Layer 1', visible: true, locked: false }];
+  manifest.scene.layers = [{ id: 'layer-1', name: 'Layer 1', visible: true, locked: false, order: 0 }];
 
   const validatedManifest = validateExportManifest(manifest);
 
@@ -405,8 +405,8 @@ test('pipeline validates complex scene with all systems', () => {
   ];
 
   const layers = [
-    { id: 'layer-1', name: 'Layer 1', visible: true, locked: false },
-    { id: 'layer-2', name: 'Layer 2', visible: true, locked: false },
+    { id: 'layer-1', name: 'Layer 1', visible: true, locked: false, order: 0 },
+    { id: 'layer-2', name: 'Layer 2', visible: true, locked: false, order: 1 },
   ];
 
   const prefabs = [

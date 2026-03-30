@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react';
 import { autoSaveScene, loadSceneVersion, saveSceneVersion, SceneState } from '../utils/storageUtils';
+import { DEFAULT_PROFILES } from '../constants/qualityProfiles';
 import { ProjectMetadataProbe } from '../types/projectAdapter';
 import { EnvironmentPreset } from '../types/environment';
 import { CameraPath, CameraPreset } from '../types/camera';
@@ -21,10 +22,12 @@ interface SceneStatePayload {
   activeCameraPresetId: string | null;
   cameraPaths: CameraPath[];
   activeCameraPathId: string | null;
+  previewCameraPathId: string | null;
   layers: Layer[];
   terrain: any;
   paths: Path[];
   collisionZones: CollisionZone[];
+  qualitySettings: any;
 }
 
 interface UseScenePersistenceCoordinatorArgs {
@@ -50,10 +53,12 @@ export const mapStoredSceneStateToAppState = (
   activeCameraPresetId: state.cameraSettings?.activePresetId ?? 'default-orbit',
   cameraPaths: state.cameraSettings?.paths ?? [],
   activeCameraPathId: state.cameraSettings?.activePathId ?? null,
+  previewCameraPathId: null,
   layers: state.layers ?? DEFAULT_LAYERS,
   terrain: state.terrain ?? { heightMap: Array(64).fill(0).map(() => Array(64).fill(0)), materialMap: Array(64).fill(0).map(() => Array(64).fill('grass')), size: 64, resolution: 64 },
   paths: state.paths ?? [],
   collisionZones: state.collisionZones ?? [],
+  qualitySettings: state.qualitySettings ?? DEFAULT_PROFILES[2].settings,
 });
 
 export const useScenePersistenceCoordinator = ({
@@ -87,7 +92,7 @@ export const useScenePersistenceCoordinator = ({
         sceneState.terrain,
         sceneState.paths,
         sceneState.collisionZones,
-        projectMetadata,
+        sceneState.qualitySettings,
       );
     }, 2000);
 
@@ -114,7 +119,8 @@ export const useScenePersistenceCoordinator = ({
       sceneState.terrain,
       sceneState.paths,
       sceneState.collisionZones,
-      projectMetadata,
+      sceneState.qualitySettings,
+      projectMetadata
     );
   }, [projectMetadata, sceneState]);
 

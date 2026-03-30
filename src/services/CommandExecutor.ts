@@ -12,7 +12,7 @@ import { EnvironmentPreset } from '../types/environment';
 import { CameraPreset, CameraPath } from '../types/camera';
 import { MaterialPreset } from '../types/materials';
 import { Path } from '../types/paths';
-import { AICommand, AICommandPayload } from './AICommandService';
+import { AICommand } from './AICommandService';
 import { CollisionZone, validatePlacementAgainstZones } from '../types/collision';
 import { MaterialService } from './MaterialService';
 import { findEnvironmentPreset, findMaterialPreset } from './PresetLookupService';

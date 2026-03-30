@@ -21,6 +21,9 @@ export const buildRuntimeMaterialFromTitanHints = (node: ImportedSwim26Node): {
   diagnostics: RuntimeDiagnostic[];
 } => {
   const diagnostics: RuntimeDiagnostic[] = [];
+  if (!node) {
+    return { diagnostics };
+  }
   const hints = node.material;
   if (!hints) {
     return { diagnostics };
