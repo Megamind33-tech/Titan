@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { Sparkles } from 'lucide-react';
 import { useMediaQuery } from './hooks/useMediaQuery';
+import { useGLTF } from '@react-three/drei';
 import { Menu, X as CloseIcon, Settings as SettingsIcon, Layers as LayersIcon, Box as BoxIcon, LayoutGrid as LayoutGridIcon, List as ListIcon, Shield as ShieldIcon, Github, Download, History as HistoryIcon, Trash2, Plus, Eye, EyeOff } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import Scene from './components/Scene';
@@ -530,6 +531,10 @@ export default function App() {
           
           Object.keys(prefabModel).forEach(key => {
             if (!['id', 'isPrefabRoot', 'parentId', 'childrenIds'].includes(key) && !overrides.includes(key)) {
+              // Preserve world transform for the root of other instances
+              if (m.isPrefabRoot && ['position', 'rotation', 'scale'].includes(key)) {
+                return;
+              }
               (updates as any)[key] = (prefabModel as any)[key];
             }
           });
@@ -901,7 +906,18 @@ export default function App() {
         }
       }
       
-      return nextModels.filter(m => m.id !== id);
+      const filteredModels = nextModels.filter(m => m.id !== id);
+      
+      // Mitigate Memory Leaks: Revoke blob URLs and trigger useGLTF cache clear
+      if (modelToDelete && modelToDelete.url && modelToDelete.url.startsWith('blob:')) {
+        const stillInUse = filteredModels.some(m => m.url === modelToDelete.url);
+        if (!stillInUse) {
+          URL.revokeObjectURL(modelToDelete.url);
+          useGLTF.clear(modelToDelete.url);
+        }
+      }
+      
+      return filteredModels;
     });
     setSelectedModelId(null);
   }, [setModels]);
@@ -911,7 +927,20 @@ export default function App() {
   }, [setModels]);
 
   const handleClearScene = useCallback(() => {
-    setModels([]);
+    setModels(models => {
+      // Mitigate Memory Leaks: Revoke all blob URLs when clearing scene
+      const uniqueBlobUrls = new Set<string>();
+      models.forEach(m => {
+        if (m.url && m.url.startsWith('blob:')) {
+          uniqueBlobUrls.add(m.url);
+        }
+      });
+      uniqueBlobUrls.forEach(url => {
+        URL.revokeObjectURL(url);
+        useGLTF.clear(url);
+      });
+      return [];
+    });
     setSelectedModelId(null);
   }, []);
 

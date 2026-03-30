@@ -109,15 +109,15 @@ const resolveImportedObjectModels = (sceneData: LoadedSceneData): { models: Mode
     if (resolution.ok === false) {
       unresolvedCount += 1;
       warnings.push(`${obj.name || obj.id || 'Imported Object'}: ${resolution.reason}`);
-      continue;
+    } else {
+      previewReadyCount += 1;
     }
 
-    previewReadyCount += 1;
     const model: ModelData = {
       id: generateAuthoredId(),
       authoredId: obj.id || generateAuthoredId(),
       name: obj.name || 'Imported Object',
-      url: resolution.url,
+      url: resolution.ok ? resolution.url : '',
       assetId: undefined,
       position: toTuple3(obj.transform?.position, [0, 0, 0]),
       rotation: toTuple3(obj.transform?.rotation, [0, 0, 0]),
@@ -125,7 +125,7 @@ const resolveImportedObjectModels = (sceneData: LoadedSceneData): { models: Mode
       visible: true,
       locked: false,
       layerId: 'scene',
-      type: inferModelType(resolution.url),
+      type: resolution.ok ? inferModelType(resolution.url) : 'model',
       behaviorTags: obj.tags || [],
     };
 
@@ -254,7 +254,10 @@ const resolveImportedEnvironment = (
       diagnostics.warnings.push(`Skybox "${skybox}" mapped to preset "${presetFromSkybox}" (approximation).`);
     } else {
       diagnostics.unsupported.push(`skybox reference "${skybox}"`);
-      diagnostics.warnings.push(`Skybox "${skybox}" cannot be loaded directly in Titan editor. Preserving imported colors/intensity only.`);
+      diagnostics.warnings.push(`Skybox "${skybox}" cannot be loaded directly in Titan. Falling back to "studio" preset to ensure reflections exist.`);
+      
+      nextEnvironment.backgroundType = 'preset';
+      nextEnvironment.environmentPreset = 'studio';
     }
   }
 

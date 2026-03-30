@@ -16,6 +16,12 @@
   body {
     @apply bg-bg-dark text-white font-sans antialiased;
   }
+
+  /* Prevent mobile scroll/swipe from interrupting slider and color inputs */
+  input[type="range"],
+  input[type="color"] {
+    touch-action: none;
+  }
 }
 
 @layer utilities {

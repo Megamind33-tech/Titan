@@ -4,6 +4,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import * as THREE from 'three';
 import { MaterialPreset } from '../../types/materials';
 import { useGesture } from '@use-gesture/react';
+import { useThree } from '@react-three/fiber';
+
+const FALLBACK_GLTF = 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Box/glTF-Binary/Box.glb';
 
 export interface SceneModelProps {
   id: string;
@@ -50,17 +53,67 @@ export interface SceneModelProps {
 }
 
 export function SceneModel({ id, name, url, position, rotation, scale, transformMode, snapEnabled, groundSnap, translationSnap, rotationSnap, scaleSnap, wireframe, lightIntensity, castShadow, receiveShadow, textureUrl, normalMapUrl, colorTint, opacity, roughness, metalness, emissiveColor, material, visible, locked, behaviorTags = [], type, selectionFilter, isSelected, useCustomGizmo, onDimensionsChange, onPositionChange, onRotationChange, onScaleChange, onTransformEnd, onSelect, onDraggingChanged, onTransformModeChange, children }: SceneModelProps) {
-  const { scene } = useGLTF(url);
+  const { scene } = useGLTF(url || FALLBACK_GLTF);
   const clonedScene = useMemo(() => scene.clone(), [scene]);
   const groupRef = useRef<THREE.Group>(null);
   const [isDragging, setIsDragging] = useState(false);
   const onDimensionsChangeRef = useRef(onDimensionsChange);
   const prevDimensions = useRef<{ width: number; height: number; depth: number } | null>(null);
 
+  const { camera, size, raycaster } = useThree();
+  const [dragPlane] = useState(() => new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));
+  const dragPlaneOffset = useRef(new THREE.Vector3());
+
+  const getSnapValue = useCallback((snapType: 'translate' | 'rotate' | 'scale', value: number) => {
+    if (!snapEnabled) return value;
+    const snap = snapType === 'translate' ? translationSnap : snapType === 'rotate' ? rotationSnap : scaleSnap;
+    if (!snap) return value;
+    return Math.round(value / snap) * snap;
+  }, [snapEnabled, translationSnap, rotationSnap, scaleSnap]);
+
   const bind = useGesture({
-    onDrag: ({ pinching, dragging }) => {
+    onDragStart: ({ event }) => {
+      if (locked || !isSelected) return;
+      const e = event as unknown as any; // R3F event
+      if (transformMode === 'translate') {
+        setIsDragging(true);
+        onDraggingChanged(true);
+        e.stopPropagation();
+
+        if (e.ray) {
+          const pt = new THREE.Vector3();
+          e.ray.intersectPlane(dragPlane, pt);
+          dragPlaneOffset.current.copy(new THREE.Vector3(...position)).sub(pt);
+        }
+      }
+    },
+    onDrag: ({ pinching, dragging, event }) => {
       if (pinching || !isSelected || locked) return;
-      if (transformMode !== 'translate') onTransformModeChange('translate');
+      const e = event as unknown as any;
+
+      if (transformMode === 'translate' && isDragging) {
+        e.stopPropagation();
+        if (e.ray) {
+          const pt = new THREE.Vector3();
+          if (e.ray.intersectPlane(dragPlane, pt)) {
+            const finalPos = pt.add(dragPlaneOffset.current);
+            const snappedX = getSnapValue('translate', finalPos.x);
+            let snappedY = (groundSnap || behaviorTags.includes('Grounded')) ? Math.max(0, getSnapValue('translate', finalPos.y)) : getSnapValue('translate', finalPos.y);
+            const snappedZ = getSnapValue('translate', finalPos.z);
+            onPositionChange(id, [snappedX, snappedY, snappedZ]);
+          }
+        }
+        return;
+      }
+      
+      if (transformMode !== 'translate' && transformMode !== 'scale' && transformMode !== 'rotate') onTransformModeChange('translate');
+    },
+    onDragEnd: () => {
+      if (isDragging) {
+        setIsDragging(false);
+        onDraggingChanged(false);
+        onTransformEnd();
+      }
     },
     onPinch: ({ pinching, dragging, offset: [d, a], memo }) => {
       if (dragging || !isSelected || locked) return;
@@ -207,7 +260,9 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
     box.getSize(size);
 
     const maxDim = Math.max(size.x, size.y, size.z);
-    if (maxDim > 0) {
+    const isEnvironment = type === 'environment' || behaviorTags.includes('Environment') || behaviorTags.includes('Structural');
+    
+    if (maxDim > 0 && !isEnvironment) {
       const normalizationScale = 1 / maxDim;
       clonedScene.scale.set(normalizationScale, normalizationScale, normalizationScale);
     }
@@ -248,12 +303,7 @@ export function SceneModel({ id, name, url, position, rotation, scale, transform
     }
   });
 
-  const getSnapValue = useCallback((snapType: 'translate' | 'rotate' | 'scale', value: number) => {
-    if (!snapEnabled) return value;
-    const snap = snapType === 'translate' ? translationSnap : snapType === 'rotate' ? rotationSnap : scaleSnap;
-    if (!snap) return value;
-    return Math.round(value / snap) * snap;
-  }, [snapEnabled, translationSnap, rotationSnap, scaleSnap]);
+  // getSnapValue was moved up
 
   const content = (
     <primitive

@@ -348,7 +348,12 @@ export default function InspectorPanel({
   };
 
   return (
-    <div className={`h-full ${isMobile ? 'w-full' : 'w-80'} bg-[#151619] border-l border-white/5 ${isMobile ? 'pt-4' : 'pt-20'} z-10 flex flex-col flex-shrink-0`}>
+    <div 
+      className={`h-full ${isMobile ? 'w-full' : 'w-80'} bg-[#151619] border-l border-white/5 ${isMobile ? 'pt-4' : 'pt-20'} z-10 flex flex-col flex-shrink-0`}
+      onPointerDown={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      onWheel={(e) => e.stopPropagation()}
+    >
       <div className="px-4 mb-4 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Settings className="w-4 h-4 text-white/50" />

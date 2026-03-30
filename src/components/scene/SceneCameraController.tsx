@@ -108,6 +108,11 @@ export function SceneCameraController({
         camera.position.lerpVectors(startPos, endPos, t);
         controlsRef.current.target.lerpVectors(startTarget, endTarget, t);
 
+        // Enforce ground collision boundary for cinematic camera
+        if (camera.position.y < 0.1) {
+          camera.position.y = 0.1;
+        }
+
         if (progress >= 1) {
           if (nextPointIndex !== 0 || loop) {
             pathState.current.currentPointIndex = nextPointIndex;
@@ -127,11 +132,8 @@ export function SceneCameraController({
       }
     }
 
-    if (!activePath) {
-      // Soft ground constraint instead of hard set
-      if (camera.position.y < 0.1) camera.position.y = 0.1;
-      if (controlsRef.current.target.y < 0) controlsRef.current.target.y = 0;
-    }
+    // Ground constraint is handled by OrbitControls maxPolarAngle (Math.PI / 2 - 0.01)
+    // Manual clamping here was conflicting with damping, causing flickering and uncontrollable camera
   });
 
   return (
